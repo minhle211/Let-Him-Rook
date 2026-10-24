@@ -4,7 +4,7 @@ import {
   type PieceClass,
 } from '@let-him-rook/shared';
 import type { Landmark3D } from '../vision/visionManager.ts';
-import { computeTorsoMetrics, isOpenPalm, type CalibrationProfile } from './calibration.ts';
+import { bodyMetrics, computeTorsoMetrics, isOpenPalm, type CalibrationProfile } from './calibration.ts';
 
 export interface CombatMovementIntent {
   moveX: number;
@@ -16,42 +16,34 @@ export interface CombatAbilityIntent {
   parryHolding?: boolean;
 }
 
+export const BODY_MOVEMENT = { forward:1.20, forwardRelease:1.08, backward:0.85, backwardRelease:0.94, lateral:0.60, lateralRelease:0.40, smoothingMs:100, activationMs:100 };
 export class TorsoLeanController {
-  private lastSeenAt: number = 0;
-  private lastIntent: CombatMovementIntent = { moveX: 0, moveZ: 0 };
-
-  public update(
-    pose: Landmark3D[] | null,
-    calibration: CalibrationProfile,
-    now = performance.now()
-  ): CombatMovementIntent {
-    const metrics = computeTorsoMetrics(pose);
-    if (!metrics) {
-      if (now - this.lastSeenAt > 300) {
-        this.lastIntent = { moveX: 0, moveZ: 0 };
-      }
-      return { ...this.lastIntent };
+  private last = -Infinity;
+  private x = 0;
+  private width = 0;
+  private axes = [0,0];
+  private candidates = [0,0];
+  private since = [0,0];
+  private profile = '';
+  reset() { this.last=-Infinity; this.axes=[0,0]; this.candidates=[0,0]; }
+  update(pose: Landmark3D[] | null, calibration: CalibrationProfile, now = performance.now()): CombatMovementIntent {
+    const key = JSON.stringify(calibration.bodyBaseline);
+    if (key !== this.profile) { this.reset(); this.profile=key; }
+    const m = bodyMetrics(pose), base = calibration.bodyBaseline;
+    if (!m || !base || !calibration.bodyCalibrated) { this.axes=[0,0]; this.candidates=[0,0]; return {moveX:0,moveZ:0}; }
+    if (now-this.last>300) { this.reset(); this.x=m.noseX; this.width=m.width; }
+    const alpha=1-Math.exp(-(now-this.last)/BODY_MOVEMENT.smoothingMs);
+    this.x+=alpha*(m.noseX-this.x); this.width+=alpha*(m.width-this.width); this.last=now;
+    const x=(this.x-base.noseX)/base.shoulderWidth, r=this.width/base.shoulderWidth;
+    const desired=[x>=BODY_MOVEMENT.lateral?1:x<=-BODY_MOVEMENT.lateral?-1:0,r>=BODY_MOVEMENT.forward?-1:r<=BODY_MOVEMENT.backward?1:0];
+    const release=[Math.abs(x)<=BODY_MOVEMENT.lateralRelease || x*this.axes[0]<0,this.axes[1]<0?r<=BODY_MOVEMENT.forwardRelease:r>=BODY_MOVEMENT.backwardRelease];
+    for(let i=0;i<2;i++) {
+      if(release[i]) this.axes[i]=0;
+      if(desired[i]!==this.candidates[i]) {this.candidates[i]=desired[i];this.since[i]=now;}
+      if(desired[i] && now-this.since[i]>=BODY_MOVEMENT.activationMs) this.axes[i]=desired[i];
     }
-
-    this.lastSeenAt = now;
-    const neutral = calibration.neutralTorsoCenter;
-    const scale = calibration.shoulderWidth * 0.7;
-
-    const rawDx = (metrics.center.x - neutral.x) / scale;
-    // In screen coords, leaning forward brings head/shoulders down (larger y) or camera closer (scale increase)
-    const rawDy = (metrics.center.y - neutral.y) / scale;
-
-    const mag = Math.hypot(rawDx, rawDy);
-    if (mag < LEAN_DEADZONE) {
-      this.lastIntent = { moveX: 0, moveZ: 0 };
-      return { moveX: 0, moveZ: 0 };
-    }
-
-    const moveX = Math.max(-1, Math.min(1, rawDx));
-    const moveZ = Math.max(-1, Math.min(1, rawDy));
-    this.lastIntent = { moveX, moveZ };
-
-    return { moveX, moveZ };
+    const length=Math.max(1,Math.hypot(...this.axes));
+    return {moveX:this.axes[0]/length,moveZ:this.axes[1]/length};
   }
 }
 

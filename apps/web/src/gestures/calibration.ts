@@ -6,6 +6,8 @@ export interface PinchThresholds {
 }
 
 export interface CalibrationProfile {
+  bodyCalibrated?: boolean;
+  bodyBaseline?: { version: 1; noseX: number; shoulderWidth: number };
   neutralTorsoCenter: { x: number; y: number };
   shoulderWidth: number;
   pinchThresholds: PinchThresholds;
@@ -19,12 +21,12 @@ export const DEFAULT_CALIBRATION: CalibrationProfile = {
   isCalibrated: false,
 };
 
-const STORAGE_KEY = 'rook_calibration_v3';
+const STORAGE_KEY = 'rook_calibration_v4';
 
 export function loadSavedCalibration(): CalibrationProfile | null {
   if (typeof localStorage === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem('rook_calibration_v3');
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CalibrationProfile;
     if (
@@ -39,6 +41,7 @@ export function loadSavedCalibration(): CalibrationProfile | null {
       typeof parsed.pinchThresholds.open === 'number' &&
       parsed.pinchThresholds.open > parsed.pinchThresholds.close
     ) {
+      if (!parsed.bodyBaseline || parsed.bodyBaseline.version !== 1 || !Number.isFinite(parsed.bodyBaseline.noseX) || !Number.isFinite(parsed.bodyBaseline.shoulderWidth) || parsed.bodyBaseline.shoulderWidth < 0.05) { parsed.bodyCalibrated = false; delete parsed.bodyBaseline; }
       return parsed;
     }
   } catch {
@@ -215,4 +218,31 @@ export function isOpenPalm(hand: Landmark3D[]): boolean {
     }
   }
   return true;
+}
+
+
+export function bodyMetrics(pose: Landmark3D[] | null) {
+  const points = [pose?.[0], pose?.[11], pose?.[12]];
+  if (points.some(p => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x <= 0 || p.x >= 1 || p.y <= 0 || p.y >= 1 || !(p.visibility! >= 0.6))) return null;
+  const [nose, left, right] = points as Landmark3D[];
+  const width = Math.abs(left.x - right.x);
+  return width >= 0.05 ? { noseX: nose.x, width, x: (left.x + right.x)/2, y: (left.y + right.y)/2 } : null;
+}
+export class BodyCalibrationCapture {
+  samples: NonNullable<ReturnType<typeof bodyMetrics>>[] = [];
+  private last = -Infinity;
+  update(pose: Landmark3D[] | null, now: number) {
+    if (now - this.last > 300) this.samples = [];
+    const m = bodyMetrics(pose);
+    if (!m || now - this.last < 50) return null;
+    this.last = now;
+    this.samples.push(m);
+    if (this.samples.length < 75) return null;
+    const mean = (key: keyof typeof m) => this.samples.reduce((a,b) => a+b[key],0)/this.samples.length;
+    const width = mean('width'), noseX = mean('noseX');
+    const unstable = ['width','noseX'].some(key => Math.sqrt(this.samples.reduce((a,b)=>a+(b[key as keyof typeof m]-mean(key as keyof typeof m))**2,0)/this.samples.length) > width*0.05);
+    const center = {x:mean('x'),y:mean('y')};
+    this.samples = [];
+    return unstable ? { error: true as const } : { error: false as const, baseline: {version: 1 as const,noseX,shoulderWidth:width}, center };
+  }
 }

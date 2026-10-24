@@ -895,7 +895,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                   </span>
                 </div>
                 <div>
-                  <span style={{ color: '#94a3b8' }}>Torso Lean: </span>
+                  <span style={{ color: '#94a3b8' }}>Body movement: </span>
                   <span style={{ color: '#cbd5e1' }}>
                     X: {(torsoLean?.leanX ?? 0).toFixed(2)}, Z: {(torsoLean?.leanZ ?? 0).toFixed(2)}
                   </span>{' '}
@@ -905,7 +905,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                       color: (torsoLean?.inDeadzone ?? true) ? '#64748b' : '#06b6d4',
                     }}
                   >
-                    [{(torsoLean?.inDeadzone ?? true) ? 'IN DEADZONE' : 'ACTIVE LEAN'}]
+                    [{(torsoLean?.inDeadzone ?? true) ? 'IN DEADZONE' : 'MOVING'}]
                   </span>
                 </div>
                 <div>
@@ -917,7 +917,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                 <div>
                   <span style={{ color: '#94a3b8' }}>Input Mode: </span>
                   <span style={{ color: '#fbbf24', fontWeight: 600 }}>
-                    {usingKeyboard ? '⌨️ WASD Keyboard' : '📷 Camera Lean'}
+                    {usingKeyboard ? '⌨️ WASD Keyboard' : '📷 Camera Steps'}
                   </span>
                 </div>
               </>

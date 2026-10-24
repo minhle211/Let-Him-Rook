@@ -56,7 +56,7 @@ Let-Him-Rook/
 
 ### 2. Vision & Gesture Calibration
 When you join a room, the **Vision & Gesture Calibration** overlay opens with a live mirrored webcam preview and real-time skeleton/hand overlay:
-1. **Step 1 — Neutral Pose**: Center your upper body and shoulders in the frame to calibrate the zero-point for 3D duel torso-lean movement.
+1. **Step 1 — Neutral Pose**: Center your upper body and shoulders in the frame to capture 75 valid frames after a three-second countdown for standing body movement.
 2. **Step 2 — Pinch Threshold**: Touch your thumb and index fingertip together to calibrate your personal grab threshold (saved locally in `localStorage`).
 3. **Step 3 — Interactive 6-Class Gesture Sandbox**: Test each of the 6 piece classes (`Pawn`, `Rook`, `Knight`, `Bishop`, `Queen`, `King`) with live gesture recognition feedback before clicking **I'm Ready — Enter 3D Match!**.
 - *No webcam?* Click **Skip to Match** to play using mouse clicks on the 3D chessboard and `WASD` + `Spacebar` / `Shift` dev controls during duels.
@@ -96,7 +96,7 @@ When you join a room, the **Vision & Gesture Calibration** overlay opens with a 
 ## Class Abilities & Gesture Controls (100 HP Baseline)
 
 Every fighter enters each duel with **100 HP** and moves at **3.5 units/sec** while auto-facing their opponent.
-- **Movement**: Lean your upper torso forward/back to advance/retreat and left/right to strafe around your opponent (or use `WASD` / Arrow keys in Dev Mode). Tracking loss `> 300 ms` automatically halts movement velocity.
+- **Movement**: Stand with face and shoulders visible. Calibrate your neutral stance, then step forward/back to advance/retreat and sideways to strafe; return to neutral to stop (or use `WASD` / Arrow keys in Dev Mode). Tracking loss `> 300 ms` automatically halts movement velocity.
 
 | Class | Gesture | Ability & Balance Tuning |
 | --- | --- | --- |

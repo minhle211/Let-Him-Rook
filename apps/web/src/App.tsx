@@ -1,3 +1,4 @@
+import { BodyMovementGuide } from './components/BodyMovementGuide.tsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import {
@@ -122,12 +123,15 @@ export const App: React.FC = () => {
     return () => ws.disconnect();
   }, []);
 
+  useEffect(() => { torsoLeanRef.current.reset(); }, [calibrationProfile, matchState.snapshot?.phase, showCalibration]);
+
   const isInRoom = Boolean(matchState.snapshot?.roomId || showCalibration);
 
   // Initialize Vision Manager once when entering room/calibration (do NOT stop when closing calibration modal!)
   useEffect(() => {
     if (!isInRoom) return;
 
+    torsoLeanRef.current.reset();
     const vm = new VisionManager();
     visionManagerRef.current = vm;
 
@@ -213,7 +217,7 @@ export const App: React.FC = () => {
 
       // 3. Process Combat Gestures during active_duel
       if (snapshot.phase === 'active_duel' && snapshot.duelSnapshot) {
-        if (frameData.pose) {
+        {
           const lean = torsoLeanRef.current.update(frameData.pose, profile, now);
           const inDeadzone = Math.hypot(lean.moveX, lean.moveZ) < 0.05;
           setTorsoTelemetry({ leanX: lean.moveX, leanZ: lean.moveZ, inDeadzone });
@@ -648,6 +652,7 @@ export const App: React.FC = () => {
         />
       </Canvas>
 
+      <div style={{position:'absolute',bottom:8,left:8,zIndex:20}}><BodyMovementGuide profile={calibrationProfile} pose={lastFrameData?.pose ?? null}/></div>
       {/* HUD Overlays */}
       <MatchHUD
         snapshot={matchState.snapshot}

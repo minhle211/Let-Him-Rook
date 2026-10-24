@@ -1,3 +1,6 @@
+import { MovementSandbox } from './MovementSandbox.tsx';
+import { BodyMovementGuide } from './BodyMovementGuide.tsx';
+import { BodyCalibrationCapture } from '../gestures/calibration.ts';
 import React, { useEffect, useRef, useState } from 'react';
 import type { PieceClass } from '@let-him-rook/shared';
 import type { Landmark3D, VisionDiagnostics, VisionFrameData } from '../vision/visionManager.ts';
@@ -10,7 +13,7 @@ import {
   saveCalibrationProfile,
   type CalibrationProfile,
 } from '../gestures/calibration.ts';
-import { CombatGestureDetector, TorsoLeanController } from '../gestures/combatGestures.ts';
+import { CombatGestureDetector } from '../gestures/combatGestures.ts';
 
 interface CalibrationOverlayProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -49,6 +52,21 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   onComplete,
 }) => {
   const savedProfile = loadSavedCalibration();
+  const [bodyBaseline, setBodyBaseline] = useState(savedProfile?.bodyBaseline);
+  const captureRef = useRef(new BodyCalibrationCapture());
+  const [captureStart, setCaptureStart] = useState<number | null>(null);
+  useEffect(() => {
+    if (captureStart === null || !lastFrameData) return;
+    const now = lastFrameData.timestamp;
+    if (now < captureStart) { setStatusMessage(`Get ready: ${Math.ceil((captureStart-now)/1000)}`); return; }
+    const result = captureRef.current.update(lastFrameData.pose, now);
+    setStatusMessage(`Hold still with face and shoulders visible: ${captureRef.current.samples.length}/75`);
+    if (!result) return;
+    setCaptureStart(null);
+    if (result.error) { setStatusMessage('Too much movement. Please retry and hold still.'); return; }
+    setBodyBaseline(result.baseline); setTorsoCenter(result.center); setShoulderWidth(result.baseline.shoulderWidth);
+    setStatusMessage('Body calibration complete. Step forward/back to move; return to neutral to stop.'); setStep('pinch');
+  }, [lastFrameData, captureStart]);
   const [step, setStep] = useState<'neutral' | 'pinch' | 'practice'>('neutral');
   const [torsoCenter, setTorsoCenter] = useState<{ x: number; y: number }>(
     savedProfile?.neutralTorsoCenter ?? DEFAULT_CALIBRATION.neutralTorsoCenter
@@ -73,7 +91,6 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const latestFrameRef = useRef<VisionFrameData | null>(lastFrameData);
   const sandboxDetectorRef = useRef(new CombatGestureDetector());
-  const sandboxLeanRef = useRef(new TorsoLeanController());
 
   latestFrameRef.current = lastFrameData;
 
@@ -98,6 +115,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   useEffect(() => {
     if (step !== 'practice' || !lastFrameData) return;
     const profile: CalibrationProfile = {
+      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline),
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
@@ -250,17 +268,10 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   }, [videoRef, torsoCenter, pinchThresholds]);
 
   const handleCaptureNeutral = () => {
-    if (liveMetrics) {
-      setTorsoCenter(liveMetrics.center);
-      setShoulderWidth(liveMetrics.shoulderWidth);
-      setStatusMessage(
-        `Neutral pose captured! Shoulders centered at (${liveMetrics.center.x.toFixed(2)}, ${liveMetrics.center.y.toFixed(2)}).`
-      );
-      setStep('pinch');
-      return;
-    }
-    setStatusMessage('Using default neutral torso center (no pose detected in frame).');
-    setStep('pinch');
+    captureRef.current = new BodyCalibrationCapture();
+    setBodyBaseline(undefined);
+    setCaptureStart(performance.now()+3000);
+    setStatusMessage('Get ready: 3');
   };
 
   const handleCapturePinch = () => {
@@ -277,6 +288,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
   const handleRestoreDefaults = () => {
     clearSavedCalibration();
+    setBodyBaseline(undefined); setCaptureStart(null);
     setTorsoCenter(DEFAULT_CALIBRATION.neutralTorsoCenter);
     setShoulderWidth(DEFAULT_CALIBRATION.shoulderWidth);
     setPinchThresholds(DEFAULT_CALIBRATION.pinchThresholds);
@@ -285,6 +297,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
   const handleFinish = () => {
     const profile: CalibrationProfile = {
+      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline),
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
@@ -297,20 +310,10 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const handleSkipWithDefaults = () => {
     const profile = savedProfile ?? {
       ...DEFAULT_CALIBRATION,
-      isCalibrated: true,
+      isCalibrated: false,
     };
     onComplete(profile);
   };
-
-  const sandboxLean =
-    step === 'practice' && lastFrameData?.pose
-      ? sandboxLeanRef.current.update(lastFrameData.pose, {
-          neutralTorsoCenter: torsoCenter,
-          shoulderWidth,
-          pinchThresholds,
-          isCalibrated: true,
-        })
-      : { moveX: 0, moveZ: 0 };
 
   return (
     <div
@@ -533,6 +536,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
         </p>
 
         {/* Calibration Step 1: Neutral Pose */}
+        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline)}} pose={lastFrameData?.pose ?? null}/>
         {step === 'neutral' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
@@ -552,7 +556,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
               </span>
             </div>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Sit comfortably centered in front of your webcam. Your neutral shoulder center sets the zero-point for 3D duel torso-lean movement.
+              Stand centered with your face and shoulders visible. Capture your neutral stance, then step toward or away from the camera to move. Return to neutral to stop.
             </p>
 
             {/* Quick manual alignment presets */}
@@ -763,13 +767,18 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
               <h3 style={{ fontSize: '1.05rem', color: '#10b981' }}>
-                Step 3: Interactive 6-Class Gesture Sandbox
+                Step 3: Movement & Ability Gesture Sandbox
               </h3>
-              <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                Lean: X={sandboxLean.moveX.toFixed(2)}, Z={sandboxLean.moveZ.toFixed(2)}
-              </span>
+
             </div>
 
+            <MovementSandbox
+              profile={{ neutralTorsoCenter: torsoCenter, shoulderWidth, pinchThresholds,
+                bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), isCalibrated: true }}
+              frame={lastFrameData}
+              onCalibrate={() => setStep('neutral')}
+            />
+            <h4 style={{ color: '#10b981', margin: '0 0 0.5rem' }}>Class Abilities</h4>
             {/* Class Selector Tabs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.35rem', marginBottom: '0.6rem' }}>
               {SANDBOX_CLASSES.map(c => (

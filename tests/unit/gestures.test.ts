@@ -125,40 +125,6 @@ test('Chess Gestures: Pick, hover, and release executes legal move; Open Palm ca
   assert.equal(controller.selectedSquare, null, 'Open palm hold must cancel selection');
 });
 
-test('Torso Lean Controller: Deadzone filter and tracking loss cutoff', () => {
-  const controller = new TorsoLeanController();
-  const calib = {
-    ...DEFAULT_CALIBRATION,
-    neutralTorsoCenter: { x: 0.5, y: 0.5 },
-    shoulderWidth: 0.3,
-  };
-
-  // Pose with minimal deviation (inside 0.12 deadzone)
-  const neutralPose: Landmark3D[] = Array.from({ length: 15 }, () => ({ x: 0, y: 0, z: 0 }));
-  neutralPose[11] = { x: 0.35, y: 0.5, z: 0 }; // Left shoulder
-  neutralPose[12] = { x: 0.65, y: 0.5, z: 0 }; // Right shoulder (center = 0.5, 0.5)
-
-  const idleLean = controller.update(neutralPose, calib, 1000);
-  assert.equal(idleLean.moveX, 0);
-  assert.equal(idleLean.moveZ, 0);
-
-  // Leaning to the right
-  const rightPose = JSON.parse(JSON.stringify(neutralPose));
-  rightPose[11] = { x: 0.45, y: 0.5, z: 0 };
-  rightPose[12] = { x: 0.75, y: 0.5, z: 0 }; // Center = 0.60 -> dx = +0.10
-  const rightLean = controller.update(rightPose, calib, 1050);
-  assert.ok(rightLean.moveX > 0.4, 'Must register rightward lean');
-
-  // Tracking loss < 300ms: holds last movement intent across dropped frame
-  const graceLean = controller.update(null, calib, 1150);
-  assert.ok(graceLean.moveX > 0.4, 'Must hold intent during < 300ms grace window');
-
-  // Tracking loss > 300ms: zeroes movement intent
-  const lostLean = controller.update(null, calib, 1400);
-  assert.equal(lostLean.moveX, 0);
-  assert.equal(lostLean.moveZ, 0);
-});
-
 test('Combat Gesture Detector: Rook extended arm trigger and WAIT_RELEASE re-arming', () => {
   const detector = new CombatGestureDetector();
   const mockPose: Landmark3D[] = Array.from({ length: 20 }, () => ({ x: 0, y: 0, z: 0 }));
