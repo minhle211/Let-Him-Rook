@@ -5,3 +5,7 @@ coverage/
 dist/
 apps/web/dist/
 *.sock
+*.pem
+*.key
+*.crt
+certs/

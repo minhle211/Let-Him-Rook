@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const https = process.env.ROOK_TLS_CERT && process.env.ROOK_TLS_KEY
+  ? { cert: readFileSync(process.env.ROOK_TLS_CERT), key: readFileSync(process.env.ROOK_TLS_KEY) }
+  : undefined;
+if (Boolean(process.env.ROOK_TLS_CERT) !== Boolean(process.env.ROOK_TLS_KEY)) {
+  throw new Error('Set both ROOK_TLS_CERT and ROOK_TLS_KEY for LAN HTTPS');
+}
 
 export default defineConfig({
   esbuild: {
@@ -16,6 +23,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    strictPort: true,
+    https,
     proxy: {
       '/ws': {
         target: 'ws://localhost:3001',

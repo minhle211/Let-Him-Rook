@@ -30,9 +30,7 @@ export class WebSocketClient {
       this.url = url;
     } else if (typeof window !== 'undefined') {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      const port = window.location.port === '5173' ? '3001' : window.location.port;
-      this.url = `${proto}//${host}${port ? `:${port}` : ''}/ws`;
+      this.url = `${proto}//${window.location.host}/ws`;
     } else {
       this.url = 'ws://localhost:3001/ws';
     }
@@ -49,9 +47,11 @@ export class WebSocketClient {
     }
 
     try {
-      this.ws = new WebSocket(this.url);
+      const socket = new WebSocket(this.url);
+      this.ws = socket;
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.isConnected = true;
         this.listeners.onStatusChange?.(true);
 
@@ -72,7 +72,7 @@ export class WebSocketClient {
         }, 5000);
       };
 
-      this.ws.onmessage = (event: MessageEvent) => {
+      socket.onmessage = (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data) as ServerMessage;
           this.handleServerMessage(msg);
@@ -81,15 +81,17 @@ export class WebSocketClient {
         }
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return;
         this.cleanup();
         this.listeners.onStatusChange?.(false);
         this.scheduleReconnect();
       };
 
-      this.ws.onerror = () => {
-        this.cleanup();
+      socket.onerror = () => {
+        if (this.ws !== socket) return;
         this.listeners.onStatusChange?.(false);
+        socket.close();
       };
     } catch {
       this.scheduleReconnect();
@@ -116,6 +118,11 @@ export class WebSocketClient {
         this.listeners.onAiAdvice?.(msg.advice);
         break;
       case 'error':
+        if (msg.code === 'invalid_message' && sessionStorage.getItem('rook_token') &&
+            /Room not found|Invalid reconnect token|Reconnect window expired/.test(msg.message)) {
+          sessionStorage.removeItem('rook_room_id');
+          sessionStorage.removeItem('rook_token');
+        }
         this.listeners.onError?.(msg);
         break;
       case 'pong':
@@ -157,6 +164,8 @@ export class WebSocketClient {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    const socket = this.ws;
     this.cleanup();
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
   }
 }

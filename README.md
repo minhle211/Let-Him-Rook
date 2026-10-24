@@ -1,6 +1,6 @@
 # Let Him Rook
 
-**Let Him Rook** is a 3D gesture-controlled chess and real-time spell-duel game built with **TypeScript, React Three Fiber (Three.js), MediaPipe Vision (`HandLandmarker` + `PoseLandmarker`), and WebSockets**. Chess rules are enforced by the server's own engine in `apps/server/src/chess/chess.ts`.
+**Let Him Rook** is a 3D gesture-controlled chess and real-time spell-duel game built with **TypeScript, React Three Fiber (Three.js), MediaPipe Vision (`HandLandmarker` + `PoseLandmarker`), `chess.js`, and WebSockets**.
 
 Every non-capture move plays out on a 3D tabletop chessboard. Whenever a piece attempts a capture, the board freezes and the two pieces drop into a **real-time 20 Hz 3D arena duel** right on the tabletop—dodging obstacles via upper-body torso lean and unleashing class-specific signature abilities via physical hand and arm gestures.
 
@@ -12,30 +12,39 @@ Requires **Node.js 24+** and a modern browser with WebGL2 (`Chromium 120+` recom
 
 ```sh
 npm install
-npm run dev:server
-npm run dev:web
+npm run dev
 ```
 
-Open **`http://localhost:5173`**. The web app proxies `/ws` and `/health` to the server on port 3001.
-
-On PowerShell, use `npm.cmd` if script execution policy blocks `npm`. Start the server and the web app in two terminals. `npm run dev` launches both, through the Unix Vite shim at `node_modules/.bin/vite`.
+ Then open **`http://localhost:5173`** in your browser.
 
 ### Other Commands
 
 | Command | Description |
 | --- | --- |
-| `npm run dev:server` | 3D WebSocket server on port 3001, with watch (`apps/server/src/index.ts`) |
-| `npm run dev:web` | Vite 3D frontend on `http://localhost:5173` |
-| `npm run dev` | Starts the server and Vite together |
-| `npm run dev:3d` | 3D WebSocket server on port 3001, without watch |
-| `npm start` | Builds `apps/web/dist` and serves the 3D game and WebSocket server on `http://localhost:3001` |
-| `npm run start:legacy` | Earlier playtest in `src/` and `public/`, on port 3001 |
-| `npm test` | Runs the 70 unit, integration, and end-to-end tests |
-| `npm run test:unit` | `tests/unit` |
-| `npm run test:integration` | `tests/integration` |
-| `npm run test:e2e` | `tests/e2e` |
+| `npm run dev` | Launches both the 3D authoritative server (`:3001`) and Vite 3D frontend (`:5173`) |
+| `npm start` | Builds `apps/web/dist` and serves the full 3D game + WebSocket server on `http://localhost:3001` |
+| `npm run dev:server` | Runs only the 3D WebSocket server (`apps/server/src/index.ts`) with watch mode |
+| `npm run dev:web` | Runs only the Vite 3D frontend (`apps/web`) on `http://localhost:5173` |
+| `npm test` | Runs unit, integration, and end-to-end tests |
 | `npm run typecheck` | Typechecks `packages/shared`, `apps/server`, and `apps/web` |
-| `npm run build` | Typechecks the workspaces and builds the production 3D web bundle |
+| `npm run build` | Runs full TypeScript verification and builds the production 3D web bundle |
+
+### Two-laptop LAN PvP playtest
+
+Use one laptop as the host and put both laptops on the same Wi-Fi network or private hotspot. The host runs the existing Node game server and the Vite frontend. In a terminal at the repository root, install dependencies with `npm install` and run `npm run dev`. The guest opens the host's LAN address on port 5173. The host creates a PvP room and shares the six-character code; the guest joins it. Both players calibrate or choose **Skip to Match**, then play from their own browser. Mouse clicks move chess pieces; WASD or arrow keys move during duels, Space uses the primary ability, and Shift holds a Pawn parry.
+
+Webcam gestures on the guest require a trusted HTTPS origin. For the LAN demo, use [mkcert](https://github.com/FiloSottile/mkcert) to create a local certificate. On the host:
+
+```sh
+mkcert -install
+mkdir -p certs
+mkcert -cert-file certs/lan.pem -key-file certs/lan-key.pem HOST_LAN_IP localhost
+ROOK_TLS_CERT=certs/lan.pem ROOK_TLS_KEY=certs/lan-key.pem npm run dev
+```
+
+Replace `HOST_LAN_IP` with the host's current LAN IPv4 address (for example, `192.168.1.20`). Both players then open `https://HOST_LAN_IP:5173`. The host must allow incoming connections to ports 5173 and 3001 through its firewall. If the host IP changes, regenerate the certificate with the new address. On the guest, import the host's `rootCA.pem` into its operating system's trusted root certificates and restart the browser; `mkcert -CAROOT` prints the folder containing that file. **Never copy or share `rootCA-key.pem` or `certs/lan-key.pem`.** Certificate files are ignored by Git.
+
+If the browser reports the certificate as untrusted, webcam access will not work; finish the trust setup before testing gestures. The game remains playable with mouse and keyboard while camera access is unavailable. The host laptop must stay awake and running because rooms are stored in its server memory. On a disconnect during a match, the game pauses and the player has 30 seconds to reconnect before a forfeit.
 
 ---
 
@@ -46,10 +55,8 @@ Let-Him-Rook/
 ├── packages/
 │   └── shared/                 # @let-him-rook/shared — Protocol, types, constants, 3D coordinate math
 ├── apps/
-│   ├── server/                 # @let-him-rook/server — Authoritative Node.js WebSocket server, in-repo chess engine, 20Hz duel sim, Bot & AI advisor
+│   ├── server/                 # @let-him-rook/server — Authoritative Node.js WebSocket server, chess.js adapter, 20Hz duel sim, Bot & AI advisor
 │   └── web/                    # @let-him-rook/web — React 18 + React Three Fiber 3D client, MediaPipe Web Worker, calibration & gesture FSMs
-├── src/                        # Earlier playtest server, `npm run start:legacy`
-├── public/                     # Earlier playtest page
 └── tests/
     ├── unit/                   # Chess adapter, 20Hz duel simulator, and gesture state machine unit tests
     ├── integration/            # Multiplayer WebSocket room, turn, duel, and 30s reconnect integration tests
@@ -63,7 +70,6 @@ Let-Him-Rook/
 ### 1. Lobby & Game Modes
 - **Practice vs Bot (Solo)**: Play immediately as White against the server-side autonomous Bot (which plays chess moves and fights 3D duels as Black).
 - **Create PvP Duel Room**: Creates a 6-character room code as White. Share the code with a second player (or open a second browser tab/window) to join as Black.
-- **Sandbox Mode**: Opens a solo room with chess rules optional, free piece placement, direct duels, and cheat toggles (god mode, move speed, no cooldowns). Both colors are marked calibrated so the match can start immediately. Another player cannot join this room.
 
 ### 2. Vision & Gesture Calibration
 When you join a room, the **Vision & Gesture Calibration** overlay opens with a live mirrored webcam preview and real-time skeleton/hand overlay:
@@ -124,7 +130,7 @@ Every fighter enters each duel with **100 HP** and moves at **3.5 units/sec** wh
 The server (`apps/server`) and web client (`apps/web`) communicate over `/ws` using strictly validated JSON messages defined in `@let-him-rook/shared`:
 
 - **Client → Server (`ClientMessage`)**:
-  - `create_room` (`{ mode?: 'pvp' | 'bot' | 'sandbox' }`)
+  - `create_room` (`{ mode?: 'pvp' | 'bot' }`)
   - `join_room` (`{ roomId: string }`)
   - `reconnect_room` (`{ roomId: string, token: string }`) — restores session within a `30s` disconnect grace window
   - `calibration_ready` (`{ ready: boolean }`)
@@ -133,12 +139,6 @@ The server (`apps/server`) and web client (`apps/web`) communicate over `/ws` us
   - `duel_ability_intent` (`{ ability, parryHolding?, actionId }`)
   - `request_ai_advice` (`{}`)
   - `ping` (`{ timestamp }`)
-  - `sandbox_set_fen` (`{ fen }`)
-  - `sandbox_place_piece` (`{ square, pieceClass, pieceColor? }`)
-  - `sandbox_free_move` (`{ from, to }`)
-  - `sandbox_start_duel` (`{ attackerClass, defenderClass, aiBehavior?, standalone? }`)
-  - `sandbox_update_config` (`{ config }`)
-  - `sandbox_reset_duel`, `sandbox_exit_duel`, `sandbox_respawn_obstacles`
 - **Server → Client (`ServerMessage`)**:
   - `room_joined` (`{ roomId, color, token, mode }`)
   - `snapshot` (`{ snapshot: MatchSnapshot }`) — monotonic `revision`, broadcasted on board updates and at `20 Hz` (`50 ms`) during active duels

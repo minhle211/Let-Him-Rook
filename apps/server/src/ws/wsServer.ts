@@ -20,18 +20,24 @@ export class SimpleWebSocketConnection implements WebSocketSession {
   private buffer: Buffer = Buffer.alloc(0);
   public onMessage?: (data: string) => void;
   public onClose?: () => void;
+  private closeNotified = false;
+
+  private notifyClose(): void {
+    if (this.closeNotified) return;
+    this.closeNotified = true;
+    this.isAlive = false;
+    this.onClose?.();
+  }
 
   constructor(socket: Duplex) {
     this.socket = socket;
     this.socket.on('data', chunk => this.handleData(chunk));
     this.socket.on('close', () => {
-      this.isAlive = false;
-      this.onClose?.();
+      this.notifyClose();
     });
     this.socket.on('error', () => {
-      this.isAlive = false;
+      this.notifyClose();
       this.socket.destroy();
-      this.onClose?.();
     });
   }
 
@@ -122,7 +128,6 @@ export class SimpleWebSocketConnection implements WebSocketSession {
 
   public close(code = 1000, reason = ''): void {
     if (!this.isAlive) return;
-    this.isAlive = false;
     const reasonBuf = Buffer.from(reason, 'utf8');
     const payload = Buffer.alloc(2 + reasonBuf.length);
     payload.writeUInt16BE(code, 0);
@@ -133,6 +138,7 @@ export class SimpleWebSocketConnection implements WebSocketSession {
     } catch {
       this.socket.destroy();
     }
+    this.notifyClose();
   }
 }
 

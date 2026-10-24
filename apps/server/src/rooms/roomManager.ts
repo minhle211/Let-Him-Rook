@@ -23,6 +23,7 @@ export interface Room {
   bot: BotController | null;
   tokens: Map<string, PlayerColor>; // token -> color
   connections: Map<PlayerColor, WebSocketSession>;
+  lastSeen: Map<PlayerColor, number>;
   createdAt: number;
   touchedAt: number;
 }
@@ -68,6 +69,7 @@ export class RoomManager {
       bot,
       tokens,
       connections: new Map(),
+      lastSeen: new Map(),
       createdAt: Date.now(),
       touchedAt: Date.now(),
     };
@@ -104,6 +106,14 @@ export class RoomManager {
     if (!color) {
       throw new Error('Invalid reconnect token');
     }
+    if (room.match.phase === 'match_over' && room.match.winReason === 'forfeit_disconnect_timeout') {
+      throw new Error('Reconnect window expired');
+    }
+    const disconnectedAt = room.match.players[color].disconnectedAt;
+    if (disconnectedAt && room.match.phase !== 'lobby' && room.match.phase !== 'calibration' && Date.now() - disconnectedAt >= 30_000) {
+      room.match.tick();
+      throw new Error('Reconnect window expired');
+    }
     room.touchedAt = Date.now();
     return { room, color };
   }
@@ -122,20 +132,19 @@ export class RoomManager {
       existing.close(1000, 'Replaced by new connection');
     }
     room.connections.set(color, session);
+    room.lastSeen.set(color, Date.now());
     room.match.setPlayerConnected(color, true);
     room.touchedAt = Date.now();
-
-    this.sendToSession(session, {
-      type: 'snapshot',
-      snapshot: room.match.getSnapshot(),
-    });
+    this.broadcastSnapshot(room);
   }
 
   public detachConnection(room: Room, color: PlayerColor, session: WebSocketSession): void {
     if (room.connections.get(color) === session) {
       room.connections.delete(color);
+      room.lastSeen.delete(color);
       room.match.setPlayerConnected(color, false);
       room.touchedAt = Date.now();
+      this.broadcastSnapshot(room);
     }
   }
 
@@ -146,7 +155,14 @@ export class RoomManager {
     session: WebSocketSession
   ): void {
     room.touchedAt = Date.now();
+    room.lastSeen.set(color, room.touchedAt);
     const match = room.match;
+    if (match.paused && message.type !== 'ping' && message.type !== 'calibration_ready') {
+      if ('actionId' in message) this.sendToSession(session, {
+        type: 'action_feedback', actionId: message.actionId, accepted: false, reason: 'match_paused',
+      });
+      return;
+    }
 
     switch (message.type) {
       case 'calibration_ready': {
@@ -161,7 +177,8 @@ export class RoomManager {
           message.from,
           message.to,
           message.promotion,
-          message.actionId
+          message.actionId,
+          match.getSimulationTime()
         );
         this.sendToSession(session, {
           type: 'action_feedback',
@@ -174,7 +191,7 @@ export class RoomManager {
       }
 
       case 'duel_move_intent': {
-        match.handleDuelMove(color, message.moveX, message.moveZ, message.actionId);
+        match.handleDuelMove(color, message.moveX, message.moveZ, message.actionId, match.getSimulationTime());
         break;
       }
 
@@ -183,7 +200,8 @@ export class RoomManager {
           color,
           message.ability,
           message.parryHolding,
-          message.actionId
+          message.actionId,
+          match.getSimulationTime()
         );
         this.sendToSession(session, {
           type: 'action_feedback',
@@ -269,6 +287,11 @@ export class RoomManager {
 
   public tick(now = Date.now()): void {
     for (const [id, room] of this.rooms.entries()) {
+      for (const [color, session] of room.connections) {
+        if ('socket' in session && now - (room.lastSeen.get(color) ?? now) >= 15_000) {
+          session.close(1001, 'Heartbeat timeout');
+        }
+      }
       // Expiration check: rooms inactive for > 2 hours with 0 connections
       if (now - room.touchedAt > 2 * 60 * 60 * 1000 && room.connections.size === 0) {
         this.rooms.delete(id);
