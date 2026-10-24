@@ -56,9 +56,8 @@ Let-Him-Rook/
 
 ### 2. Vision & Gesture Calibration
 When you join a room, the **Vision & Gesture Calibration** overlay opens with a live mirrored webcam preview and real-time skeleton/hand overlay:
-1. **Step 1 — Neutral Pose**: Center your upper body and shoulders in the frame to capture 75 valid frames after a three-second countdown for standing body movement.
-2. **Step 2 — Pinch Threshold**: Touch your thumb and index fingertip together to calibrate your personal grab threshold (saved locally in `localStorage`).
-3. **Step 3 — Interactive 6-Class Gesture Sandbox**: Test each of the 6 piece classes (`Pawn`, `Rook`, `Knight`, `Bishop`, `Queen`, `King`) with live gesture recognition feedback before clicking **I'm Ready — Enter 3D Match!**.
+1. **Step 1 — Body and Pinch Calibration**: After a three-second preparation countdown, stand inside the body outline for five seconds. Hold one hand open for the first half, then touch thumb and index finger together for the second half. Keep your stance steady throughout.
+2. **Step 2 — Movement and Ability Gesture Sandbox**: Practice stepping in each direction, returning to neutral, and testing the six piece abilities. Adjust each movement direction's trigger distance or recenter your stance for this room before clicking **I'm Ready — Enter 3D Match!**.
 - *No webcam?* Click **Skip to Match** to play using mouse clicks on the 3D chessboard and `WASD` + `Spacebar` / `Shift` dev controls during duels.
 - During a match, a collapsible **Picture-in-Picture (PiP) camera monitor** in the bottom-right corner displays your live pose/hand tracking and FPS, and you can click **📷 Calibrate** in the top bar between duels to recalibrate anytime.
 

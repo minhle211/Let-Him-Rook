@@ -22,6 +22,7 @@ import { SandboxControlCenter } from './components/SandboxControlCenter.tsx';
 import {
   DEFAULT_CALIBRATION,
   loadSavedCalibration,
+  saveCalibrationProfile,
   type CalibrationProfile,
 } from './gestures/calibration.ts';
 import { ChessGestureController } from './gestures/chessGestures.ts';
@@ -85,9 +86,12 @@ export const App: React.FC = () => {
     wsClientRef.current = ws;
 
     ws.setListeners({
-      onJoined: ({ color, token, mode }) => {
+      onJoined: ({ roomId, color, token, mode }) => {
         setIsLoading(false);
         setError(null);
+        if (matchStore.getState().snapshot?.roomId !== roomId) {
+          setCalibrationProfile(loadSavedCalibration() ?? DEFAULT_CALIBRATION);
+        }
         matchStore.setSession(color, token);
         if (mode === 'sandbox') {
           setShowCalibration(false);
@@ -391,14 +395,16 @@ export const App: React.FC = () => {
     wsClientRef.current?.send({ type: 'join_room', roomId });
   };
 
-  const handleCalibrationComplete = (profile: CalibrationProfile) => {
+  const handleCalibrationComplete = (profile: CalibrationProfile, persisted?: CalibrationProfile) => {
     setCalibrationProfile(profile);
+    if (persisted) saveCalibrationProfile(persisted);
     setShowCalibration(false);
     wsClientRef.current?.send({ type: 'calibration_ready', ready: true });
   };
 
   const handleLeaveRoom = () => {
     setShowCalibration(false);
+    setCalibrationProfile(loadSavedCalibration() ?? DEFAULT_CALIBRATION);
     matchStore.clearSession();
     wsClientRef.current?.disconnect();
     wsClientRef.current?.connect();
@@ -705,6 +711,8 @@ export const App: React.FC = () => {
         <CalibrationOverlay
           videoRef={videoRef}
           lastFrameData={lastFrameData}
+          initialProfile={calibrationProfile}
+          onProfileChange={setCalibrationProfile}
           onComplete={handleCalibrationComplete}
         />
       )}

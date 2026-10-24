@@ -1,16 +1,14 @@
 import { MovementSandbox } from './MovementSandbox.tsx';
 import { BodyMovementGuide } from './BodyMovementGuide.tsx';
-import { BodyCalibrationCapture } from '../gestures/calibration.ts';
+import { CombinedCalibrationCapture, DEFAULT_MOVEMENT_SENSITIVITY } from '../gestures/calibration.ts';
 import React, { useEffect, useRef, useState } from 'react';
 import type { PieceClass } from '@let-him-rook/shared';
 import type { Landmark3D, VisionDiagnostics, VisionFrameData } from '../vision/visionManager.ts';
 import {
   DEFAULT_CALIBRATION,
-  clearSavedCalibration,
   computePinchRatio,
   computeTorsoMetrics,
   loadSavedCalibration,
-  saveCalibrationProfile,
   type CalibrationProfile,
 } from '../gestures/calibration.ts';
 import { CombatGestureDetector } from '../gestures/combatGestures.ts';
@@ -18,7 +16,9 @@ import { CombatGestureDetector } from '../gestures/combatGestures.ts';
 interface CalibrationOverlayProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   lastFrameData: VisionFrameData | null;
-  onComplete: (profile: CalibrationProfile) => void;
+  onComplete: (profile: CalibrationProfile, savedProfile?: CalibrationProfile) => void;
+  initialProfile: CalibrationProfile;
+  onProfileChange: (profile: CalibrationProfile) => void;
 }
 
 const HAND_CONNECTIONS: [number, number][] = [
@@ -49,33 +49,49 @@ const SANDBOX_CLASSES: { id: PieceClass; label: string; hint: string }[] = [
 export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   videoRef,
   lastFrameData,
-  onComplete,
+  onComplete, initialProfile, onProfileChange,
 }) => {
   const savedProfile = loadSavedCalibration();
-  const [bodyBaseline, setBodyBaseline] = useState(savedProfile?.bodyBaseline);
-  const captureRef = useRef(new BodyCalibrationCapture());
+  const savedBodyRef = useRef({
+    baseline: savedProfile?.bodyBaseline,
+    center: savedProfile?.neutralTorsoCenter ?? initialProfile.neutralTorsoCenter,
+    shoulderWidth: savedProfile?.shoulderWidth ?? initialProfile.shoulderWidth,
+  });
+  const [bodyBaseline, setBodyBaseline] = useState(initialProfile.bodyBaseline);
+  const [movementSensitivity, setMovementSensitivity] = useState(initialProfile.movementSensitivity ?? { ...DEFAULT_MOVEMENT_SENSITIVITY });
+  const captureRef = useRef(new CombinedCalibrationCapture());
   const [captureStart, setCaptureStart] = useState<number | null>(null);
+  const [clock, setClock] = useState(performance.now());
+  const [captureError, setCaptureError] = useState('');
+  useEffect(() => {
+    if (captureStart === null) return;
+    const id = window.setInterval(() => setClock(performance.now()), 100);
+    return () => window.clearInterval(id);
+  }, [captureStart]);
   useEffect(() => {
     if (captureStart === null || !lastFrameData) return;
-    const now = lastFrameData.timestamp;
-    if (now < captureStart) { setStatusMessage(`Get ready: ${Math.ceil((captureStart-now)/1000)}`); return; }
-    const result = captureRef.current.update(lastFrameData.pose, now);
-    setStatusMessage(`Hold still with face and shoulders visible: ${captureRef.current.samples.length}/75`);
-    if (!result) return;
+    captureRef.current.update(lastFrameData, lastFrameData.timestamp - captureStart, lastFrameData.timestamp);
+  }, [captureStart, lastFrameData]);
+  useEffect(() => {
+    if (captureStart === null || clock < captureStart + 5000) return;
+    const result = captureRef.current.finish();
     setCaptureStart(null);
-    if (result.error) { setStatusMessage('Too much movement. Please retry and hold still.'); return; }
-    setBodyBaseline(result.baseline); setTorsoCenter(result.center); setShoulderWidth(result.baseline.shoulderWidth);
-    setStatusMessage('Body calibration complete. Step forward/back to move; return to neutral to stop.'); setStep('pinch');
-  }, [lastFrameData, captureStart]);
-  const [step, setStep] = useState<'neutral' | 'pinch' | 'practice'>('neutral');
+    if (result.errors.length) { setCaptureError(result.errors.join(' ')); setStatusMessage('Calibration needs another try.'); return; }
+    const baseline = result.baseline!;
+    setBodyBaseline(baseline); setTorsoCenter(result.center!); setShoulderWidth(baseline.shoulderWidth);
+    setPinchThresholds(result.pinch!);
+    savedBodyRef.current = { baseline, center: result.center!, shoulderWidth: baseline.shoulderWidth };
+    setCaptureError(''); setStatusMessage('Body and pinch calibrated. Test movement and gestures below.'); setStep('practice');
+  }, [clock, captureStart]);
+  const [step, setStep] = useState<'neutral' | 'practice'>('neutral');
   const [torsoCenter, setTorsoCenter] = useState<{ x: number; y: number }>(
-    savedProfile?.neutralTorsoCenter ?? DEFAULT_CALIBRATION.neutralTorsoCenter
+    initialProfile.neutralTorsoCenter ?? DEFAULT_CALIBRATION.neutralTorsoCenter
   );
   const [shoulderWidth, setShoulderWidth] = useState<number>(
-    savedProfile?.shoulderWidth ?? DEFAULT_CALIBRATION.shoulderWidth
+    initialProfile.shoulderWidth ?? DEFAULT_CALIBRATION.shoulderWidth
   );
   const [pinchThresholds, setPinchThresholds] = useState<{ close: number; open: number }>(
-    savedProfile?.pinchThresholds ?? DEFAULT_CALIBRATION.pinchThresholds
+    initialProfile.pinchThresholds ?? DEFAULT_CALIBRATION.pinchThresholds
   );
   const [statusMessage, setStatusMessage] = useState<string>(
     savedProfile
@@ -115,7 +131,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   useEffect(() => {
     if (step !== 'practice' || !lastFrameData) return;
     const profile: CalibrationProfile = {
-      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline),
+      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity,
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
@@ -137,7 +153,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           : res.ability.toUpperCase().replace(/_/g, ' ');
       setLastTriggeredAbility({ name: label, at: Date.now() });
     }
-  }, [step, lastFrameData, sandboxClass, torsoCenter, shoulderWidth, pinchThresholds]);
+  }, [step, lastFrameData, sandboxClass, torsoCenter, shoulderWidth, pinchThresholds, bodyBaseline]);
 
   // Render mirrored video + pose skeleton + hand landmarks on canvas
   useEffect(() => {
@@ -268,47 +284,33 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   }, [videoRef, torsoCenter, pinchThresholds]);
 
   const handleCaptureNeutral = () => {
-    captureRef.current = new BodyCalibrationCapture();
-    setBodyBaseline(undefined);
-    setCaptureStart(performance.now()+3000);
-    setStatusMessage('Get ready: 3');
-  };
-
-  const handleCapturePinch = () => {
-    if (Number.isFinite(livePinchRatio) && livePinchRatio > 0.03) {
-      const close = Math.max(0.16, Math.min(0.48, Number((livePinchRatio * 1.22).toFixed(3))));
-      const open = Math.max(close + 0.1, Math.min(0.68, Number((close * 1.38).toFixed(3))));
-      setPinchThresholds({ close, open });
-      setStatusMessage(`Pinch threshold calibrated (close: ${close}, release: ${open}).`);
-    } else {
-      setStatusMessage('Using default pinch thresholds (hold hand visible to customize).');
-    }
-    setStep('practice');
-  };
-
-  const handleRestoreDefaults = () => {
-    clearSavedCalibration();
-    setBodyBaseline(undefined); setCaptureStart(null);
-    setTorsoCenter(DEFAULT_CALIBRATION.neutralTorsoCenter);
-    setShoulderWidth(DEFAULT_CALIBRATION.shoulderWidth);
-    setPinchThresholds(DEFAULT_CALIBRATION.pinchThresholds);
-    setStatusMessage('Default calibration settings restored.');
+    captureRef.current = new CombinedCalibrationCapture();
+    setCaptureError(''); setBodyBaseline(undefined);
+    const start = performance.now() + 3000;
+    setCaptureStart(start); setClock(performance.now());
+    setStatusMessage('Get ready — calibration starts in 3 seconds.');
   };
 
   const handleFinish = () => {
     const profile: CalibrationProfile = {
-      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline),
+      bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity,
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
       isCalibrated: true,
     };
-    saveCalibrationProfile(profile);
-    onComplete(profile);
+    onComplete(profile, {
+      ...profile,
+      bodyBaseline: savedBodyRef.current.baseline,
+      bodyCalibrated: Boolean(savedBodyRef.current.baseline),
+      neutralTorsoCenter: savedBodyRef.current.center,
+      shoulderWidth: savedBodyRef.current.shoulderWidth,
+      movementSensitivity: undefined,
+    });
   };
 
   const handleSkipWithDefaults = () => {
-    const profile = savedProfile ?? {
+    const profile = initialProfile ?? savedProfile ?? {
       ...DEFAULT_CALIBRATION,
       isCalibrated: false,
     };
@@ -426,27 +428,9 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </div>
         )}
 
-        {/* Stepper Pills */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          {(['neutral', 'pinch', 'practice'] as const).map((s, idx) => (
-            <button
-              key={s}
-              onClick={() => setStep(s)}
-              style={{
-                flex: 1,
-                padding: '0.45rem',
-                borderRadius: 6,
-                border: step === s ? '1px solid #60a5fa' : '1px solid #334155',
-                backgroundColor: step === s ? '#1e3a8a' : '#0f172a',
-                color: step === s ? '#ffffff' : '#94a3b8',
-                fontSize: '0.8rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              {idx + 1}. {s === 'neutral' ? 'Neutral Pose' : s === 'pinch' ? 'Pinch Threshold' : 'Gesture Sandbox'}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <button onClick={() => setStep('neutral')} aria-current={step === 'neutral' ? 'step' : undefined}>1. Body + Pinch Calibration</button>
+          <button onClick={() => setStep('practice')} aria-current={step === 'practice' ? 'step' : undefined}>2. Gesture Sandbox</button>
         </div>
 
         {/* Live Video + Skeleton Overlay Canvas */}
@@ -476,7 +460,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
           {/* Diagnostic Warnings Banner (only shown once worker is ready) */}
           {diagnostics.workerStatus === 'ready' &&
-            (diagnostics.isLowLight || (step === 'neutral' && diagnostics.isCroppedBody) || (step === 'pinch' && diagnostics.isCroppedHands)) && (
+            (diagnostics.isLowLight || (step === 'neutral' && (diagnostics.isCroppedBody || diagnostics.isCroppedHands))) && (
               <div
                 style={{
                   position: 'absolute',
@@ -494,10 +478,17 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
               >
                 {diagnostics.isLowLight && '⚠️ Low lighting detected. '}
                 {step === 'neutral' && diagnostics.isCroppedBody && '👋 Keep both shoulders visible in frame. '}
-                {step === 'pinch' && diagnostics.isCroppedHands && '✋ Raise your hand into the camera view. '}
+                {step === 'neutral' && diagnostics.isCroppedHands && '✋ Raise your hand into the camera view. '}
               </div>
             )}
 
+          {step === 'neutral' && <svg viewBox="0 0 640 360" preserveAspectRatio="none" aria-hidden="true" style={{ position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none' }}>
+            <circle cx="320" cy="77" r="33" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
+            <path d="M245 170 Q255 125 290 122 L350 122 Q385 125 395 170 L412 285 L228 285 Z" fill="rgba(250,204,21,.08)" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
+            <path d="M245 165 L190 207 M395 165 L450 207" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
+            <circle cx="190" cy="207" r="18" fill="none" stroke="#a855f7" strokeWidth="3" />
+            <text x="454" y="210" fill="#fef08a" fontSize="17" fontWeight="bold">HAND</text>
+          </svg>}
           {/* Live Telemetry Overlay at bottom of video */}
           <div
             style={{
@@ -535,248 +526,46 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           {statusMessage}
         </p>
 
-        {/* Calibration Step 1: Neutral Pose */}
-        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline)}} pose={lastFrameData?.pose ?? null}/>
-        {step === 'neutral' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-              <h3 style={{ fontSize: '1.05rem', color: '#60a5fa', margin: 0 }}>
-                Step 1: Capture Neutral Upper-Body Pose
-              </h3>
-              <span
-                style={{
-                  fontSize: '0.78rem',
-                  color: liveMetrics ? '#4ade80' : '#f59e0b',
-                  fontWeight: 600,
-                }}
-              >
-                {liveMetrics
-                  ? `Body Detected (${liveMetrics.center.x.toFixed(2)}, ${liveMetrics.center.y.toFixed(2)})`
-                  : 'Searching for shoulders...'}
-              </span>
-            </div>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Stand centered with your face and shoulders visible. Capture your neutral stance, then step toward or away from the camera to move. Return to neutral to stop.
-            </p>
-
-            {/* Quick manual alignment presets */}
-            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '1rem', fontSize: '0.75rem', color: '#94a3b8' }}>
-              <span>Manual Preset:</span>
-              <button
-                onClick={() => setTorsoCenter({ x: 0.5, y: 0.55 })}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                Default Center
-              </button>
-              <button
-                onClick={() => setTorsoCenter(c => ({ ...c, x: Math.max(0.2, c.x - 0.05) }))}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                ◀ Left
-              </button>
-              <button
-                onClick={() => setTorsoCenter(c => ({ ...c, x: Math.min(0.8, c.x + 0.05) }))}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                Right ▶
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button
-                onClick={handleCaptureNeutral}
-                style={{
-                  flex: 2,
-                  padding: '0.8rem',
-                  borderRadius: 8,
-                  backgroundColor: liveMetrics ? '#3b82f6' : '#2563eb',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {liveMetrics ? 'Capture Live Neutral Pose' : 'Continue with Default Center'}
-              </button>
-              <button
-                onClick={handleSkipWithDefaults}
-                style={{
-                  flex: 1,
-                  padding: '0.8rem',
-                  borderRadius: 8,
-                  backgroundColor: '#334155',
-                  color: '#e2e8f0',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Skip to Match
-              </button>
-            </div>
+        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline), movementSensitivity}} pose={lastFrameData?.pose ?? null}/>
+        {step === 'neutral' && <section style={{padding:16,background:'#1e293b',border:'2px solid #facc15',borderRadius:8,marginTop:10}}>
+          <h3 style={{margin:'0 0 8px',color:'#facc15'}}>Body and Pinch Calibration</h3>
+          <p>Stand inside the outline with your face, shoulders, and one hand visible. Keep your body stance steady for the entire capture.</p>
+          <div role="status" aria-live="polite" style={{fontSize:20,fontWeight:800,padding:12,background:'#422006',color:'#fef08a',borderRadius:6,marginBottom:8}}>
+            {captureStart === null ? 'Ready to calibrate' : clock < captureStart
+              ? `Get ready — calibration starts in ${Math.ceil((captureStart-clock)/1000)} seconds`
+              : clock < captureStart + 2500
+                ? 'Stand still in the outline. Keep your hand open.'
+                : 'Keep your stance steady. Touch thumb and index finger together and hold.'}
           </div>
-        )}
-
-        {/* Calibration Step 2: Pinch Threshold */}
-        {step === 'pinch' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-              <h3 style={{ fontSize: '1.05rem', color: '#c084fc', margin: 0 }}>
-                Step 2: Calibrate Thumb-Index Pinch
-              </h3>
-              <span
-                style={{
-                  fontSize: '0.78rem',
-                  color: Number.isFinite(livePinchRatio) ? (isCurrentlyPinched ? '#4ade80' : '#fbbf24') : '#f59e0b',
-                  fontWeight: 600,
-                }}
-              >
-                {Number.isFinite(livePinchRatio)
-                  ? `Ratio: ${livePinchRatio.toFixed(2)} (${isCurrentlyPinched ? 'PINCHED' : 'OPEN'})`
-                  : 'Hold hand up in view'}
-              </span>
-            </div>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Touch thumb and index fingertips together, then click <strong>Capture Pinch Contact</strong> (or select a sensitivity preset below).
-            </p>
-
-            {/* Live Pinch Meter */}
-            <div style={{ marginBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#cbd5e1', marginBottom: 4 }}>
-                <span>Pinch Contact ({pinchThresholds.close})</span>
-                <span>Release ({pinchThresholds.open})</span>
-              </div>
-              <div style={{ width: '100%', height: 10, backgroundColor: '#0f172a', borderRadius: 5, overflow: 'hidden', border: '1px solid #334155' }}>
-                <div
-                  style={{
-                    width: `${
-                      Number.isFinite(livePinchRatio)
-                        ? Math.max(5, Math.min(100, (1 - Math.min(1, livePinchRatio)) * 100))
-                        : 0
-                    }%`,
-                    height: '100%',
-                    backgroundColor: isCurrentlyPinched ? '#22c55e' : '#8b5cf6',
-                    transition: 'width 0.08s linear',
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Sensitivity Presets */}
-            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '1rem', fontSize: '0.75rem', color: '#94a3b8' }}>
-              <span>Sensitivity Preset:</span>
-              <button
-                onClick={() => setPinchThresholds({ close: 0.32, open: 0.46 })}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: pinchThresholds.close === 0.32 ? '#6b21a8' : '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                Strict (0.32)
-              </button>
-              <button
-                onClick={() => setPinchThresholds({ close: 0.38, open: 0.52 })}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: pinchThresholds.close === 0.38 ? '#6b21a8' : '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                Balanced (0.38)
-              </button>
-              <button
-                onClick={() => setPinchThresholds({ close: 0.46, open: 0.60 })}
-                style={{
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: 4,
-                  backgroundColor: pinchThresholds.close === 0.46 ? '#6b21a8' : '#1e293b',
-                  border: '1px solid #475569',
-                  color: '#e2e8f0',
-                  cursor: 'pointer',
-                }}
-              >
-                Forgiving (0.46)
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <button
-                onClick={handleCapturePinch}
-                style={{
-                  flex: 2,
-                  padding: '0.8rem',
-                  borderRadius: 8,
-                  backgroundColor: '#8b5cf6',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {Number.isFinite(livePinchRatio) ? 'Capture Pinch Contact' : 'Continue with Balanced Pinch'}
-              </button>
-              <button
-                onClick={handleRestoreDefaults}
-                style={{
-                  flex: 1,
-                  padding: '0.8rem',
-                  borderRadius: 8,
-                  backgroundColor: '#334155',
-                  color: '#e2e8f0',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Restore Defaults
-              </button>
-            </div>
+          {captureStart !== null && clock >= captureStart && <progress aria-label="Calibration progress" value={Math.min(5000,clock-captureStart)} max={5000} style={{width:'100%',height:16}} />}
+          {captureError && <p role="alert" style={{color:'#fecaca',fontWeight:700}}>{captureError}</p>}
+          <div style={{display:'flex',gap:8,marginTop:8}}>
+            <button onClick={handleCaptureNeutral} disabled={captureStart !== null}>{captureError ? 'Retry calibration' : 'Start 5-second calibration'}</button>
+            <button onClick={handleSkipWithDefaults}>Skip to Match</button>
           </div>
-        )}
+        </section>}
 
-        {/* Calibration Step 3: Live Gesture Sandbox */}
         {step === 'practice' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
               <h3 style={{ fontSize: '1.05rem', color: '#10b981' }}>
-                Step 3: Movement & Ability Gesture Sandbox
+                Step 2: Movement & Ability Gesture Sandbox
               </h3>
 
             </div>
 
             <MovementSandbox
               profile={{ neutralTorsoCenter: torsoCenter, shoulderWidth, pinchThresholds,
-                bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), isCalibrated: true }}
+                bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity, isCalibrated: true }}
               frame={lastFrameData}
               onCalibrate={() => setStep('neutral')}
+              onChange={profile => {
+                setBodyBaseline(profile.bodyBaseline);
+                setTorsoCenter(profile.neutralTorsoCenter);
+                setShoulderWidth(profile.shoulderWidth);
+                setMovementSensitivity(profile.movementSensitivity ?? { ...DEFAULT_MOVEMENT_SENSITIVITY });
+                onProfileChange(profile);
+              }}
             />
             <h4 style={{ color: '#10b981', margin: '0 0 0.5rem' }}>Class Abilities</h4>
             {/* Class Selector Tabs */}

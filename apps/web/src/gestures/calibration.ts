@@ -8,6 +8,7 @@ export interface PinchThresholds {
 export interface CalibrationProfile {
   bodyCalibrated?: boolean;
   bodyBaseline?: { version: 1; noseX: number; shoulderWidth: number };
+  movementSensitivity?: { forward: number; backward: number; left: number; right: number };
   neutralTorsoCenter: { x: number; y: number };
   shoulderWidth: number;
   pinchThresholds: PinchThresholds;
@@ -65,6 +66,50 @@ export function clearSavedCalibration(): void {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
     // Ignore storage errors
+  }
+}
+
+export const DEFAULT_MOVEMENT_SENSITIVITY = { forward: 1, backward: 1, left: 1, right: 1 };
+
+export class CombinedCalibrationCapture {
+  private body: NonNullable<ReturnType<typeof bodyMetrics>>[] = [];
+  private open: number[] = [];
+  private pinched: number[] = [];
+  private lastAt = -Infinity;
+
+  update(frame: { pose: Landmark3D[] | null; hands: Landmark3D[][] }, elapsedMs: number, now: number): void {
+    if (elapsedMs < 0 || elapsedMs >= 5000 || now - this.lastAt < 50) return;
+    this.lastAt = now;
+    const metrics = bodyMetrics(frame.pose);
+    if (metrics) this.body.push(metrics);
+    const ratio = frame.hands.map(computePinchRatio).find(value => Number.isFinite(value) && value > 0.02 && value < 2);
+    if (ratio !== undefined) (elapsedMs < 2500 ? this.open : this.pinched).push(ratio);
+  }
+
+  finish(): { baseline?: CalibrationProfile['bodyBaseline']; center?: CalibrationProfile['neutralTorsoCenter']; pinch?: PinchThresholds; errors: string[] } {
+    const errors: string[] = [];
+    let baseline: CalibrationProfile['bodyBaseline'];
+    let center: CalibrationProfile['neutralTorsoCenter'] | undefined;
+    if (this.body.length < 50) errors.push('Body tracking was insufficient. Keep your face and shoulders in the outline.');
+    else {
+      const mean = (key: keyof (typeof this.body)[number]) => this.body.reduce((sum, sample) => sum + sample[key], 0) / this.body.length;
+      const width = mean('width');
+      if (['noseX', 'width'].some(key => Math.sqrt(this.body.reduce((sum, sample) => sum + (sample[key as 'noseX' | 'width'] - mean(key as 'noseX' | 'width')) ** 2, 0) / this.body.length) > width * 0.05)) {
+        errors.push('Body stance moved too much. Stand still and try again.');
+      } else {
+        baseline = { version: 1, noseX: mean('noseX'), shoulderWidth: width };
+        center = { x: mean('x'), y: mean('y') };
+      }
+    }
+    let pinch: PinchThresholds | undefined;
+    if (this.open.length < 15 || this.pinched.length < 15) errors.push('Hand tracking was insufficient. Show your hand while open and pinched.');
+    else {
+      const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+      const contact = median(this.pinched), release = median(this.open);
+      if (release - contact < 0.15) errors.push('Open and pinch poses were too similar. Separate your fingers, then pinch firmly.');
+      else pinch = { close: Number((contact + (release - contact) * 0.25).toFixed(3)), open: Number((contact + (release - contact) * 0.65).toFixed(3)) };
+    }
+    return { baseline, center, pinch, errors };
   }
 }
 
@@ -231,13 +276,15 @@ export function bodyMetrics(pose: Landmark3D[] | null) {
 export class BodyCalibrationCapture {
   samples: NonNullable<ReturnType<typeof bodyMetrics>>[] = [];
   private last = -Infinity;
+  private requiredSamples: number;
+  constructor(requiredSamples = 75) { this.requiredSamples = requiredSamples; }
   update(pose: Landmark3D[] | null, now: number) {
     if (now - this.last > 300) this.samples = [];
     const m = bodyMetrics(pose);
     if (!m || now - this.last < 50) return null;
     this.last = now;
     this.samples.push(m);
-    if (this.samples.length < 75) return null;
+    if (this.samples.length < this.requiredSamples) return null;
     const mean = (key: keyof typeof m) => this.samples.reduce((a,b) => a+b[key],0)/this.samples.length;
     const width = mean('width'), noseX = mean('noseX');
     const unstable = ['width','noseX'].some(key => Math.sqrt(this.samples.reduce((a,b)=>a+(b[key as keyof typeof m]-mean(key as keyof typeof m))**2,0)/this.samples.length) > width*0.05);
