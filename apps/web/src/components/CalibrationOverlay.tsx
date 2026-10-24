@@ -378,7 +378,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
                 ? 'LOADING AI MODELS...'
                 : diagnostics.workerStatus === 'error'
                 ? 'WORKER ERROR'
-                : `${diagnostics.fps} FPS (${diagnostics.inferenceMs}ms)`}
+                : `${diagnostics.fps} FPS (${diagnostics.inferenceMs}ms${diagnostics.delegate ? ` · ${diagnostics.delegate}` : ''})`}
             </span>
             <span
               style={{

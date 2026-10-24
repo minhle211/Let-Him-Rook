@@ -654,6 +654,8 @@ export const App: React.FC = () => {
       {/* 3D WebGL Canvas */}
       <Canvas
         shadows
+        // Render at 1x even on Retina: at 2x the scene saturates the GPU and starves MediaPipe (~20 FPS -> ~5 FPS).
+        dpr={1}
         camera={{ position: [0, 8.8, 8.2], fov: 45 }}
         style={{ width: '100%', height: '100%' }}
       >
