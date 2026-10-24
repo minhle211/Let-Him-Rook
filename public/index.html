@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Let Him Rook · Playtest</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/gestures.js"></script>
+</head>
+<body>
+  <nav class="hand-menu-bar" aria-label="Hand menu controls">
+    <button id="menu-hands" data-menu-hand aria-pressed="false">Menu hands: off</button>
+    <button id="hand-scroll-up" data-menu-hand aria-label="Scroll up">Up</button>
+    <button id="hand-scroll-down" data-menu-hand aria-label="Scroll down">Down</button>
+    <span id="menu-hand-status" role="status">Enable camera, then turn on Menu hands.</span>
+  </nav>
+  <span id="menu-hand-cursor" hidden></span>
+  <main>
+    <header><span class="eyebrow">LOCAL PLAYTEST</span><h1>Let Him Rook</h1><p>Make your move. Fight for the square.</p></header>
+    <section id="lobby" class="panel">
+      <h2>Start a match</h2>
+      <p>Play solo against a bot, or create a room for two players.</p>
+      <button data-menu-hand id="practice">Practice vs bot</button>
+      <button data-menu-hand id="create">Create room · White</button>
+      <form id="join-form"><label for="room-code">Room code</label><div class="row"><input id="room-code" maxlength="6" pattern="[a-fA-F0-9]{6}" placeholder="ABC123" required autocomplete="off"><button data-menu-hand type="submit">Join · Black</button></div></form>
+      <div id="hand-keypad" hidden>
+        <p class="hint">Point and pinch to enter the six-character room code.</p>
+        <div id="hand-code-keys" class="hand-code-keys"></div>
+      </div>
+    </section>
+    <section id="match" hidden>
+      <div class="toolbar panel"><div><span class="eyebrow">ROOM <strong id="code"></strong></span><p id="player"></p></div><a id="second-tab" target="_blank" rel="noopener">Open join tab ↗</a><button data-menu-hand id="leave" class="secondary">Back to lobby</button></div>
+      <p id="connection" role="status"></p>
+      <div class="layout">
+        <section class="panel"><h2 id="status"></h2><label class="live-toggle"><input data-menu-hand type="checkbox" id="board-hands"> Hand-controlled moves</label>
+          <p id="board-hand-status" class="hint" role="status">Enable the camera below, then turn on hand-controlled moves.</p>
+          <div class="board-wrap"><div id="board" aria-label="Chess board"></div><span id="board-hand-cursor" hidden></span></div><p class="hint">Select a piece, then a marked square. Captures start battles.</p></section>
+        <aside class="panel">
+          <h2 id="battle-title">Battle arena</h2>
+          <p id="battle-hint">Move onto an enemy piece to begin.</p>
+          <div id="battle" hidden>
+            <div id="fighters"></div>
+            <div id="projectiles" class="track" aria-label="Projectiles in flight"></div>
+            <div class="spells"><button data-spell="attack">Attack</button><button data-spell="defense">Shield</button><button data-spell="special">Special</button></div>
+            <p class="hint">Attack: 25 damage. Shield: blocks 30. Special: stronger next attack, or a stronger shield for rooks.</p>
+          </div>
+          <hr><h3>Quick battle test</h3><p class="hint">White: e2 → e4<br>Black: d7 → d5<br>White: e4 → d5</p>
+          <p class="hint">Health carries over. Capture the king to win. No check or checkmate.</p>
+        </aside>
+      </div>
+    </section>
+    <section class="panel gesture-panel">
+      <h2>Spell practice</h2>
+      <p class="hint">Pinch thumb and index finger, draw, then release. Line = attack. Circle = shield. Z = special.</p>
+      <div class="row"><button id="camera-start">Enable camera</button><button data-menu-hand id="camera-stop" class="secondary" disabled>Stop camera</button></div>
+      <div class="pinch-setup">
+        <h3>Pinch calibration</h3>
+        <p class="hint">Use your normal playing distance. Controls pause during setup; use the mouse for these buttons.</p>
+        <div class="row">
+          <button id="pinch-calibrate" disabled>Calibrate pinch</button>
+          <button id="pinch-reset" class="secondary">Restore defaults</button>
+          <button id="pinch-cancel" class="secondary" hidden>Cancel setup</button>
+        </div>
+        <p id="pinch-calibration-status" role="status">Updated pinch settings. Enable the camera and recalibrate for a smaller release gap.</p>
+        <label for="pinch-opening">Finger opening</label>
+        <meter id="pinch-opening" min="0" max="1" value="0"></meter>
+        <span id="pinch-profile">Default settings</span>
+      </div>
+      <label class="live-toggle"><input data-menu-hand type="checkbox" id="gesture-live"> Cast spells during battle</label>
+      <div class="camera-pad">
+        <video id="hand-video" autoplay muted playsinline></video>
+        <canvas id="gesture-canvas" width="640" height="480" aria-label="Spell drawing pad. Drag to draw when camera is off."></canvas>
+        <span id="hand-cursor" hidden></span>
+      </div>
+      <div id="camera-stats" class="camera-stats" aria-label="Camera performance">
+        <span>Camera <strong id="camera-fps">--</strong> FPS</span>
+        <span>Tracking <strong id="tracking-fps">--</strong> FPS</span>
+        <span>Detection <strong id="tracking-ms">--</strong> ms</span>
+        <span>Hand <strong id="tracking-hand">Off</strong></span>
+        <span>Pinch <strong id="tracking-pinch">--</strong></span>
+        <span>Hand drops <strong id="tracking-drops">0</strong></span>
+      </div>
+      <p class="hint">Tracking FPS = hand checks per second. Hand drops count lost-hand episodes, even brief ones.</p>
+      <p id="gesture-status" role="status">Practice mode. Enable camera or drag in the pad with your mouse.</p>
+      <p class="hint">Video stays on this laptop. First use downloads the hand model. For two-tab testing, enable the camera in one tab only.</p>
+    </section>
+    <p id="error" role="alert"></p>
+  </main>
+</body>
+</html>
