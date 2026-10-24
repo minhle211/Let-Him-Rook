@@ -173,6 +173,8 @@ export interface MatchSnapshot {
   winReason?: string;
   legalMoves: Record<BoardSquare, BoardSquare[]>;
   serverTime: number;
+  simulationTime: number;
+  paused: boolean;
   sandboxConfig?: SandboxConfig;
 }
 

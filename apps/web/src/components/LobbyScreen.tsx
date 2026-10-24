@@ -6,6 +6,7 @@ interface LobbyScreenProps {
   onJoinRoom: (roomId: string) => void;
   isLoading: boolean;
   error?: string | null;
+  connected: boolean;
 }
 
 export const LobbyScreen: React.FC<LobbyScreenProps> = ({
@@ -13,6 +14,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
   onJoinRoom,
   isLoading,
   error,
+  connected,
 }) => {
   const [roomCode, setRoomCode] = useState('');
 
@@ -80,11 +82,12 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
             {error}
           </div>
         )}
+        {!connected && <p style={{ color: '#fbbf24' }}>Connecting to the host… Check the LAN URL and that the host is running.</p>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <button
             onClick={() => onCreateRoom('pvp')}
-            disabled={isLoading}
+            disabled={isLoading || !connected}
             style={{
               padding: '1rem',
               borderRadius: 10,
@@ -102,7 +105,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 
           <button
             onClick={() => onCreateRoom('bot')}
-            disabled={isLoading}
+            disabled={isLoading || !connected}
             style={{
               padding: '1rem',
               borderRadius: 10,
@@ -120,7 +123,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
 
           <button
             onClick={() => onCreateRoom('sandbox')}
-            disabled={isLoading}
+            disabled={isLoading || !connected}
             style={{
               padding: '1rem',
               borderRadius: 10,
@@ -173,7 +176,7 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
             />
             <button
               type="submit"
-              disabled={isLoading || !roomCode.trim()}
+              disabled={isLoading || !connected || !roomCode.trim()}
               style={{
                 padding: '0.85rem 1.5rem',
                 borderRadius: 8,

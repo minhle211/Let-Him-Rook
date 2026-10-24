@@ -59,6 +59,8 @@ export class MatchMachine {
 
   public players: Record<PlayerColor, PlayerStatus>;
   private processedActionIds: Set<string> = new Set();
+  private pausedSince: number | null = null;
+  private pausedDurationMs = 0;
   public unreadDuelEvents: DuelEvent[] = [];
 
   public sandboxConfig: SandboxConfig = {
@@ -94,6 +96,17 @@ export class MatchMachine {
   }
 
   public setPlayerConnected(color: PlayerColor, connected: boolean, now = Date.now()): void {
+    if (this.mode === 'pvp' && this.phase !== 'lobby' && this.phase !== 'calibration' && this.phase !== 'match_over') {
+      if (!connected && this.pausedSince === null) this.pausedSince = now;
+      if (connected && this.pausedSince !== null && this.players[color === 'w' ? 'b' : 'w'].connected) {
+        this.pausedDurationMs += now - this.pausedSince;
+        this.pausedSince = null;
+        if (this.duel) {
+          this.duel.attacker.vx = this.duel.attacker.vz = 0;
+          this.duel.defender.vx = this.duel.defender.vz = 0;
+        }
+      }
+    }
     const p = this.players[color];
     p.connected = connected;
     if (!connected) {
@@ -105,6 +118,12 @@ export class MatchMachine {
       }
     }
     this.revision++;
+  }
+
+  public get paused(): boolean { return this.pausedSince !== null; }
+
+  public getSimulationTime(now = Date.now()): number {
+    return (this.pausedSince ?? now) - this.pausedDurationMs;
   }
 
   public setCalibrationReady(color: PlayerColor, ready: boolean): void {
@@ -132,7 +151,8 @@ export class MatchMachine {
     actionId: string,
     now = Date.now()
   ): { accepted: boolean; reason?: string } {
-    if (this.processedActionIds.has(actionId)) {
+    const actionKey = `${color}:${actionId}`;
+    if (this.processedActionIds.has(actionKey)) {
       return { accepted: true }; // Deduplicated
     }
 
@@ -147,7 +167,7 @@ export class MatchMachine {
 
     // In sandbox mode with rules not enforced, bypass chess legality check
     if (this.mode === 'sandbox' && !this.sandboxConfig.rulesEnforced) {
-      this.processedActionIds.add(actionId);
+      this.processedActionIds.add(actionKey);
       const piece = getPieceAt(this.fen, from);
       if (!piece) {
         return { accepted: false, reason: 'no_piece_on_from' };
@@ -187,7 +207,7 @@ export class MatchMachine {
       return { accepted: false, reason: 'illegal_move' };
     }
 
-    this.processedActionIds.add(actionId);
+    this.processedActionIds.add(actionKey);
 
     const isCapture = isCaptureMove(this.fen, from, to);
     if (!isCapture) {
@@ -261,7 +281,8 @@ export class MatchMachine {
     actionId: string,
     now = Date.now()
   ): { accepted: boolean; reason?: string } {
-    if (this.processedActionIds.has(actionId)) {
+    const actionKey = `${color}:${actionId}`;
+    if (this.processedActionIds.has(actionKey)) {
       return { accepted: true };
     }
     if (this.phase !== 'active_duel' || !this.duel) {
@@ -270,28 +291,33 @@ export class MatchMachine {
 
     const res = applyAbilityIntent(this.duel, color, ability, parryHolding, now);
     if (res.accepted) {
-      this.processedActionIds.add(actionId);
+      this.processedActionIds.add(actionKey);
     }
     return res;
   }
 
   public tick(now = Date.now()): void {
     // 1. Reconnect grace timeout check (30s) - disabled in sandbox mode
-    if (this.mode !== 'sandbox') {
+    if (this.mode !== 'sandbox' && this.phase !== 'lobby' && this.phase !== 'calibration') {
       for (const color of ['w', 'b'] as PlayerColor[]) {
         if (this.mode === 'bot' && color === 'b') continue;
         const p = this.players[color];
         if (!p.connected && p.disconnectedAt && this.phase !== 'match_over') {
           if (now - p.disconnectedAt >= RECONNECT_GRACE_MS) {
             this.phase = 'match_over';
-            this.winner = color === 'w' ? 'b' : 'w';
+            this.winner = this.players[color === 'w' ? 'b' : 'w'].connected
+              ? (color === 'w' ? 'b' : 'w') : 'draw';
             this.winReason = 'forfeit_disconnect_timeout';
+            this.pausedSince = null;
             this.revision++;
             return;
           }
         }
       }
     }
+
+    if (this.paused) return;
+    now = this.getSimulationTime(now);
 
     // 2. State machine transitions
     if (this.phase === 'duel_intro') {
@@ -515,6 +541,8 @@ export class MatchMachine {
       winReason: this.winReason,
       legalMoves,
       serverTime: now,
+      simulationTime: this.getSimulationTime(now),
+      paused: this.paused,
       sandboxConfig: this.mode === 'sandbox' ? { ...this.sandboxConfig } : undefined,
     };
   }

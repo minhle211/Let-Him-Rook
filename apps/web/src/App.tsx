@@ -42,7 +42,10 @@ const PRIMARY_ABILITY_BY_CLASS: Record<PieceClass, AbilityType> = {
 
 export const App: React.FC = () => {
   const [matchState, setMatchState] = useState<MatchState>(matchStore.getState());
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(() =>
+    Boolean(sessionStorage.getItem('rook_room_id') && sessionStorage.getItem('rook_token'))
+  );
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCalibration, setShowCalibration] = useState(false);
   const [calibrationProfile, setCalibrationProfile] = useState<CalibrationProfile>(
@@ -71,6 +74,7 @@ export const App: React.FC = () => {
   const keysPressedRef = useRef<Set<string>>(new Set());
 
   const actionCounterRef = useRef(0);
+  const actionPrefixRef = useRef(crypto.randomUUID());
 
   calibrationProfileRef.current = calibrationProfile;
   showCalibrationRef.current = showCalibration;
@@ -93,11 +97,15 @@ export const App: React.FC = () => {
           setCalibrationProfile(loadSavedCalibration() ?? DEFAULT_CALIBRATION);
         }
         matchStore.setSession(color, token);
+        const phase = matchStore.getState().snapshot?.phase;
         if (mode === 'sandbox') {
           setShowCalibration(false);
           setIsSandboxOpen(true);
-        } else {
+        } else if ((phase === 'lobby' || phase === 'calibration' || !phase) &&
+                   !matchStore.getState().snapshot?.players[color].calibrated) {
           setShowCalibration(true);
+        } else {
+          setShowCalibration(false);
         }
       },
       onSnapshot: snapshot => {
@@ -120,6 +128,14 @@ export const App: React.FC = () => {
       onError: err => {
         setIsLoading(false);
         setError(err.message);
+        if (/Room not found|Invalid reconnect token|Reconnect window expired/.test(err.message)) {
+          matchStore.clearSession();
+          setShowCalibration(false);
+        }
+      },
+      onStatusChange: isConnected => {
+        setConnected(isConnected);
+        if (!isConnected) keysPressedRef.current.clear();
       },
     });
 
@@ -149,7 +165,7 @@ export const App: React.FC = () => {
       const snapshot = state.snapshot;
       const localColor = state.localColor;
       const profile = calibrationProfileRef.current;
-      if (!snapshot || !localColor) return;
+      if (!snapshot || !localColor || snapshot.paused) return;
 
       const now = performance.now();
 
@@ -167,7 +183,7 @@ export const App: React.FC = () => {
         );
         matchStore.setPromotionHover(promoRes.hover);
         if (promoRes.selected) {
-          const actionId = `promo_${++actionCounterRef.current}`;
+          const actionId = `${actionPrefixRef.current}_promo_${++actionCounterRef.current}`;
           wsClientRef.current?.send({
             type: 'chess_move_intent',
             from: state.promotionMove.from,
@@ -206,7 +222,7 @@ export const App: React.FC = () => {
           if (isPawn && isPromoRank) {
             matchStore.setPromotionMove(res.intent);
           } else {
-            const actionId = `move_${++actionCounterRef.current}`;
+            const actionId = `${actionPrefixRef.current}_move_${++actionCounterRef.current}`;
             wsClientRef.current?.send({
               type: 'chess_move_intent',
               from: res.intent.from,
@@ -232,7 +248,7 @@ export const App: React.FC = () => {
               type: 'duel_move_intent',
               moveX: lean.moveX,
               moveZ: lean.moveZ,
-              actionId: `lean_${Math.round(now)}`,
+              actionId: `${actionPrefixRef.current}_lean_${Math.round(now)}`,
             });
           }
         }
@@ -251,7 +267,7 @@ export const App: React.FC = () => {
         );
 
         if (ability) {
-          const actionId = `ab_${++actionCounterRef.current}`;
+          const actionId = `${actionPrefixRef.current}_ab_${++actionCounterRef.current}`;
           wsClientRef.current?.send({
             type: 'duel_ability_intent',
             ability: ability.ability,
@@ -265,6 +281,9 @@ export const App: React.FC = () => {
     if (videoRef.current) {
       vm.start(videoRef.current).catch(err => {
         console.warn('[App] Camera start failed or denied:', err);
+        matchStore.showToast(!window.isSecureContext
+          ? 'Camera needs trusted HTTPS. Use the LAN HTTPS setup or play with mouse and keyboard.'
+          : 'Camera unavailable or permission denied. You can play with mouse and keyboard.', true);
       });
     }
 
@@ -276,16 +295,9 @@ export const App: React.FC = () => {
 
   // Dev keyboard controls (WASD / Arrow keys for duel movement + Spacebar for ability)
   useEffect(() => {
-    const allowDev =
-      Boolean(import.meta.env.DEV) ||
-      (import.meta.env.VITE_ALLOW_DEV_CONTROLS === 'true' &&
-        typeof window !== 'undefined' &&
-        new URLSearchParams(window.location.search).get('dev') === '1');
-    if (!allowDev) return;
-
     const sendKeyboardMove = () => {
       const state = matchStore.getState();
-      if (state.snapshot?.phase !== 'active_duel') return;
+      if (state.snapshot?.phase !== 'active_duel' || state.snapshot.paused) return;
       const keys = keysPressedRef.current;
       let moveX = 0;
       let moveZ = 0;
@@ -298,12 +310,12 @@ export const App: React.FC = () => {
         type: 'duel_move_intent',
         moveX,
         moveZ,
-        actionId: `kb_mv_${Date.now()}`,
+        actionId: `${actionPrefixRef.current}_kb_mv_${Date.now()}`,
       });
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (showCalibrationRef.current) return;
+      if (showCalibrationRef.current || matchStore.getState().snapshot?.paused) return;
       const key = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         keysPressedRef.current.add(key);
@@ -313,7 +325,7 @@ export const App: React.FC = () => {
         const state = matchStore.getState();
         const duel = state.snapshot?.duelSnapshot;
         const localColor = state.localColor;
-        if (state.snapshot?.phase === 'active_duel' && duel && localColor) {
+        if (state.snapshot?.phase === 'active_duel' && !state.snapshot.paused && duel && localColor) {
           e.preventDefault();
           const fighter =
             duel.attacker.color === localColor ? duel.attacker : duel.defender;
@@ -321,14 +333,14 @@ export const App: React.FC = () => {
           wsClientRef.current?.send({
             type: 'duel_ability_intent',
             ability,
-            actionId: `kb_ab_${++actionCounterRef.current}`,
+            actionId: `${actionPrefixRef.current}_kb_ab_${++actionCounterRef.current}`,
           });
         }
       } else if (key === 'shift' && !e.repeat) {
         const state = matchStore.getState();
         const duel = state.snapshot?.duelSnapshot;
         const localColor = state.localColor;
-        if (state.snapshot?.phase === 'active_duel' && duel && localColor) {
+        if (state.snapshot?.phase === 'active_duel' && !state.snapshot.paused && duel && localColor) {
           const fighter =
             duel.attacker.color === localColor ? duel.attacker : duel.defender;
           if (fighter.pieceClass === 'pawn') {
@@ -336,7 +348,7 @@ export const App: React.FC = () => {
               type: 'duel_ability_intent',
               ability: 'pawn_parry',
               parryHolding: true,
-              actionId: `kb_parry_on_${++actionCounterRef.current}`,
+              actionId: `${actionPrefixRef.current}_kb_parry_on_${++actionCounterRef.current}`,
             });
           }
         }
@@ -361,7 +373,7 @@ export const App: React.FC = () => {
               type: 'duel_ability_intent',
               ability: 'pawn_parry',
               parryHolding: false,
-              actionId: `kb_parry_off_${++actionCounterRef.current}`,
+              actionId: `${actionPrefixRef.current}_kb_parry_off_${++actionCounterRef.current}`,
             });
           }
         }
@@ -376,12 +388,25 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    const clearKeys = () => { keysPressedRef.current.clear(); setUsingKeyboard(false); };
+    window.addEventListener('blur', clearKeys);
     return () => {
       clearInterval(intervalId);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', clearKeys);
     };
   }, []);
+
+  useEffect(() => {
+    if (matchState.snapshot?.paused) {
+      keysPressedRef.current.clear();
+      setUsingKeyboard(false);
+      torsoLeanRef.current.reset();
+      combatDetectorRef.current = new CombatGestureDetector();
+      chessGesturesRef.current = new ChessGestureController();
+    }
+  }, [matchState.snapshot?.paused]);
 
   const handleCreateRoom = (mode: MatchMode) => {
     setIsLoading(true);
@@ -413,7 +438,7 @@ export const App: React.FC = () => {
   const handlePromotionSelect = (piece: PromotionPieceClass) => {
     const move = matchState.promotionMove;
     if (move) {
-      const actionId = `promo_${++actionCounterRef.current}`;
+      const actionId = `${actionPrefixRef.current}_promo_${++actionCounterRef.current}`;
       wsClientRef.current?.send({
         type: 'chess_move_intent',
         from: move.from,
@@ -467,7 +492,7 @@ export const App: React.FC = () => {
             const movingPiece = getPieceFromFen(snapshot.fen, from);
             const targetPiece = getPieceFromFen(snapshot.fen, square);
             if (movingPiece && targetPiece && movingPiece.color !== targetPiece.color) {
-              const actionId = `free_capture_${++actionCounterRef.current}`;
+              const actionId = `${actionPrefixRef.current}_free_capture_${++actionCounterRef.current}`;
               wsClientRef.current?.send({
                 type: 'chess_move_intent',
                 from,
@@ -489,7 +514,7 @@ export const App: React.FC = () => {
     }
 
     // Rules-enforced movement (in normal mode, only on your turn)
-    if (snapshot.mode !== 'sandbox' && snapshot.turn !== localColor) return;
+    if (snapshot.paused || (snapshot.mode !== 'sandbox' && snapshot.turn !== localColor)) return;
 
     if (!matchState.selectedSquare) {
       if (snapshot.legalMoves[square]?.length) {
@@ -509,7 +534,7 @@ export const App: React.FC = () => {
         if (isPawn && isPromoRank) {
           matchStore.setPromotionMove({ from, to: square });
         } else {
-          const actionId = `click_move_${++actionCounterRef.current}`;
+          const actionId = `${actionPrefixRef.current}_click_move_${++actionCounterRef.current}`;
           wsClientRef.current?.send({
             type: 'chess_move_intent',
             from,
@@ -580,7 +605,8 @@ export const App: React.FC = () => {
   };
 
   const handleDevAbility = (ability: AbilityType, parryHolding?: boolean) => {
-    const actionId = `dev_ab_${++actionCounterRef.current}`;
+    if (matchStore.getState().snapshot?.paused) return;
+    const actionId = `${actionPrefixRef.current}_dev_ab_${++actionCounterRef.current}`;
     wsClientRef.current?.send({
       type: 'duel_ability_intent',
       ability,
@@ -677,6 +703,7 @@ export const App: React.FC = () => {
         isSandboxOpen={isSandboxOpen}
         torsoLean={torsoTelemetry}
         usingKeyboard={usingKeyboard}
+        connected={connected}
       />
 
       {/* Sandbox Control Center Floating Dock */}
@@ -724,6 +751,7 @@ export const App: React.FC = () => {
           onJoinRoom={handleJoinRoom}
           isLoading={isLoading}
           error={error}
+          connected={connected}
         />
       )}
     </div>

@@ -24,6 +24,7 @@ interface MatchHUDProps {
   isSandboxOpen?: boolean;
   torsoLean?: { leanX: number; leanZ: number; inDeadzone: boolean } | null;
   usingKeyboard?: boolean;
+  connected?: boolean;
 }
 
 const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; primaryAbility: AbilityType }> = {
@@ -76,9 +77,16 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   isSandboxOpen,
   torsoLean,
   usingKeyboard,
+  connected = true,
 }) => {
   const [showMiniCam, setShowMiniCam] = useState(true);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [clockNow, setClockNow] = useState(Date.now());
+  useEffect(() => {
+    if (!snapshot?.paused) return;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [snapshot?.paused]);
   const miniCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const latestFrameRef = useRef<VisionFrameData | null>(lastFrameData ?? null);
   latestFrameRef.current = lastFrameData ?? null;
@@ -189,7 +197,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   const opponentStatus = snapshot.players[opponentColor];
   const isOpponentDisconnected = !opponentStatus?.connected && opponentStatus?.disconnectedAt;
   const remainingGraceSec = isOpponentDisconnected
-    ? Math.max(0, Math.ceil((30000 - (Date.now() - (opponentStatus.disconnectedAt || 0))) / 1000))
+    ? Math.max(0, Math.ceil((30000 - (clockNow - (opponentStatus.disconnectedAt || 0))) / 1000))
     : 0;
 
   // Waiting for second player in PvP lobby
@@ -199,11 +207,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
     (!snapshot.players.w.connected || !snapshot.players.b.connected);
 
   // Strictly gated dev controls check
-  const allowDev =
-    Boolean(import.meta.env.DEV) ||
-    (import.meta.env.VITE_ALLOW_DEV_CONTROLS === 'true' &&
-      typeof window !== 'undefined' &&
-      new URLSearchParams(window.location.search).get('dev') === '1');
+  const allowDev = true;
 
   const handleCopyRoom = () => {
     if (navigator.clipboard) {
@@ -405,7 +409,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             <span>
               {isWaitingForOpponent
                 ? `Waiting for Opponent (Code: ${snapshot.roomId})`
-                : 'Waiting for Calibration Ready...'}
+                : `Ready — White: ${snapshot.players.w.calibrated ? 'yes' : 'waiting'}, Black: ${snapshot.players.b.calibrated ? 'yes' : 'waiting'}`}
             </span>
           )}
           {snapshot.phase === 'chess_turn' && (
@@ -429,6 +433,9 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
       </div>
 
       {/* Disconnect Grace Warning Banner */}
+      {!connected && <div style={{ alignSelf: 'center', backgroundColor: '#991b1b', color: '#fff', padding: '0.6rem 1.2rem', borderRadius: 8, fontWeight: 700 }}>
+        Connection lost — reconnecting to host…
+      </div>}
       {isOpponentDisconnected && (
         <div
           style={{
@@ -441,7 +448,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             fontSize: '0.9rem',
           }}
         >
-          ⚠️ Opponent disconnected! Forfeit timer: {remainingGraceSec}s
+          ⚠️ Match paused. Opponent disconnected — reconnect within {remainingGraceSec}s
         </div>
       )}
 
@@ -667,17 +674,17 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                     <span
                       style={{
                         color:
-                          duel.attacker.cooldowns.primary > (snapshot.serverTime || Date.now())
+                          duel.attacker.cooldowns.primary > snapshot.simulationTime
                             ? '#f87171'
                             : '#4ade80',
                         fontWeight: 600,
                       }}
                     >
-                      {duel.attacker.cooldowns.primary > (snapshot.serverTime || Date.now())
+                      {duel.attacker.cooldowns.primary > snapshot.simulationTime
                         ? `${
                             Math.ceil(
                               (duel.attacker.cooldowns.primary -
-                                (snapshot.serverTime || Date.now())) /
+                                snapshot.simulationTime) /
                                 100
                             ) / 10
                           }s`
@@ -750,17 +757,17 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                     <span
                       style={{
                         color:
-                          duel.defender.cooldowns.primary > (snapshot.serverTime || Date.now())
+                          duel.defender.cooldowns.primary > snapshot.simulationTime
                             ? '#f87171'
                             : '#4ade80',
                         fontWeight: 600,
                       }}
                     >
-                      {duel.defender.cooldowns.primary > (snapshot.serverTime || Date.now())
+                      {duel.defender.cooldowns.primary > snapshot.simulationTime
                         ? `${
                             Math.ceil(
                               (duel.defender.cooldowns.primary -
-                                (snapshot.serverTime || Date.now())) /
+                                snapshot.simulationTime) /
                                 100
                             ) / 10
                           }s`
@@ -788,7 +795,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
         )}
 
         {/* Strictly Gated Dev Controls Toolbar */}
-        {allowDev && snapshot.phase === 'active_duel' && localFighter && localGuide && (
+        {allowDev && connected && snapshot.phase === 'active_duel' && !snapshot.paused && localFighter && localGuide && (
           <div
             style={{
               backgroundColor: 'rgba(30, 41, 59, 0.92)',
