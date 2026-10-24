@@ -1,141 +1,133 @@
 # Let Him Rook
 
-A two-player chess variant: captures start real-time spell battles. Includes a simple mouse-controlled test screen; webcam controls are next.
+**Let Him Rook** is a 3D gesture-controlled chess and real-time spell-duel game built with **TypeScript, React Three Fiber (Three.js), MediaPipe Vision (`HandLandmarker` + `PoseLandmarker`), `chess.js`, and WebSockets**.
 
-## Run
+Every non-capture move plays out on a 3D tabletop chessboard. Whenever a piece attempts a capture, the board freezes and the two pieces drop into a **real-time 20 Hz 3D arena duel** right on the tabletop—dodging obstacles via upper-body torso lean and unleashing class-specific signature abilities via physical hand and arm gestures.
 
-Requires Node.js 24+.
+---
+
+## Quick Start
+
+Requires **Node.js 24+** and a modern browser with WebGL2 (`Chromium 120+` recommended for webcam MediaPipe WASM SIMD).
 
 ```sh
 npm install
-npm start
-npm test
-npm run typecheck
+npm run dev
 ```
 
-On PowerShell, use `npm.cmd` if script execution policy blocks `npm`.
+ Then open **`http://localhost:5173`** in your browser.
 
-## Play on one laptop
+### Other Commands
 
-1. Run `npm start` and open `http://localhost:3001`.
-2. Click **Create room · White**, then **Open join tab**.
-3. In the new tab, click **Join · Black**. Each tab controls one side.
-4. Click a piece and then a marked square to move. Black sees the board from Black's side.
-5. For a quick battle: White plays **e2 → e4**, Black plays **d7 → d5**, then White plays **e4 → d5**.
-6. Use **Attack**, **Shield**, and **Special** in each tab during battle.
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Launches both the 3D authoritative server (`:3001`) and Vite 3D frontend (`:5173`) |
+| `npm start` | Builds `apps/web/dist` and serves the full 3D game + WebSocket server on `http://localhost:3001` |
+| `npm run dev:server` | Runs only the 3D WebSocket server (`apps/server/src/index.ts`) with watch mode |
+| `npm run dev:web` | Runs only the Vite 3D frontend (`apps/web`) on `http://localhost:5173` |
+| `npm test` | Runs all 42+ unit, integration, and end-to-end tests |
+| `npm run typecheck` | Typechecks `packages/shared`, `apps/server`, and `apps/web` |
+| `npm run build` | Runs full TypeScript verification and builds the production 3D web bundle |
 
-Refresh keeps that tab's player session. Live updates reconnect automatically after a dropped connection. **Back to lobby** forgets the tab's session; it does not free its seat in the old room. Create a new room for a fresh game. Place the tabs in separate windows side by side to see both players at once.
+---
 
-## Play over Wi-Fi
+## Monorepo Architecture
 
-The server listens on all network interfaces on port 3001 (`PORT` overrides it).
-On the host laptop, run `ipconfig` to find its Wi-Fi IPv4 address. Both laptops can reach `http://<host-ip>:3001/health` on the same network. Windows may ask to allow Node through the firewall; use the private network option. Some guest Wi-Fi networks block connections between laptops; use a private hotspot if needed.
+```text
+Let-Him-Rook/
+├── packages/
+│   └── shared/                 # @let-him-rook/shared — Protocol, types, constants, 3D coordinate math
+├── apps/
+│   ├── server/                 # @let-him-rook/server — Authoritative Node.js WebSocket server, chess.js adapter, 20Hz duel sim, Bot & AI advisor
+│   └── web/                    # @let-him-rook/web — React 18 + React Three Fiber 3D client, MediaPipe Web Worker, calibration & gesture FSMs
+└── tests/
+    ├── unit/                   # Chess adapter, 20Hz duel simulator, and gesture state machine unit tests
+    ├── integration/            # Multiplayer WebSocket room, turn, duel, and 30s reconnect integration tests
+    └── e2e/                    # Full solo vs. bot and 2-player PvP capture-duel match flow tests
+```
 
-## Rules
+---
 
-- Standard piece movement, without check, checkmate, castling, or en passant.
-- White starts. Capturing a king wins, including defeating an attacking king.
-- Capture attempts start a battle and block board moves until it ends.
-- Attacker wins: replaces defender. Defender wins: stays, attacker disappears.
-- The other player's board turn follows every battle, regardless of winner.
-- Health persists. Pawns automatically promote to queens, keeping their health and maximum health.
-- Rooks have 140 HP, pawns 80 HP, other pieces 100 HP.
-- Attack: 25 damage, 700 ms travel time, 1200 ms cooldown.
-- Defense: absorbs up to 30 damage for 1000 ms, 1800 ms cooldown.
-- Special: empowers the next attack to 40 damage; rook instead gets a 60-point shield for 1600 ms. Special cooldown is 5000 ms. Empowerment does not stack.
-- Shields replace existing shields. Buffs and cooldowns reset between battles.
-- Battles end after 60 seconds: higher remaining HP percentage wins, ties favor the defender.
-- Spells use server receipt order and server time. Already-arrived projectiles resolve before a new spell. If lethal projectiles arrive together, the first accepted attack resolves first.
+## How to Play
 
-These balance values and timeout rules are provisional.
+### 1. Lobby & Game Modes
+- **Practice vs Bot (Solo)**: Play immediately as White against the server-side autonomous Bot (which plays chess moves and fights 3D duels as Black).
+- **Create PvP Duel Room**: Creates a 6-character room code as White. Share the code with a second player (or open a second browser tab/window) to join as Black.
 
-## API
+### 2. Vision & Gesture Calibration
+When you join a room, the **Vision & Gesture Calibration** overlay opens with a live mirrored webcam preview and real-time skeleton/hand overlay:
+1. **Step 1 — Neutral Pose**: Center your upper body and shoulders in the frame to calibrate the zero-point for 3D duel torso-lean movement.
+2. **Step 2 — Pinch Threshold**: Touch your thumb and index fingertip together to calibrate your personal grab threshold (saved locally in `localStorage`).
+3. **Step 3 — Interactive 6-Class Gesture Sandbox**: Test each of the 6 piece classes (`Pawn`, `Rook`, `Knight`, `Bishop`, `Queen`, `King`) with live gesture recognition feedback before clicking **I'm Ready — Enter 3D Match!**.
+- *No webcam?* Click **Skip to Match** to play using mouse clicks on the 3D chessboard and `WASD` + `Spacebar` / `Shift` dev controls during duels.
+- During a match, a collapsible **Picture-in-Picture (PiP) camera monitor** in the bottom-right corner displays your live pose/hand tracking and FPS, and you can click **📷 Calibrate** in the top bar between duels to recalibrate anytime.
 
-JSON over HTTP for commands; server-sent events (SSE) for live snapshots. The server owns all game state. Cameras and gesture recognition will stay on each laptop.
+### 3. Chessboard Controls (`chess_turn`)
+- **Webcam Gesture**: Point with your index fingertip (`landmark 8`) over the middle 80% of the camera frame to highlight a square (`hoverSquare`). **Pinch** thumb and index finger to pick up a piece, move to a legal green destination dot, and **release** to commit the move. Hold an **upright open palm** for 4 frames to cancel your current selection.
+- **Mouse Fallback**: Click any friendly piece with legal moves, then click a highlighted green destination square.
+- **Pawn Promotion**: Advancing a Pawn to the 8th/1st rank opens the 4-choice **Promotion Modal** (`Queen`, `Rook`, `Bishop`, `Knight`), selectable via fingertip pinch or click before the move (or capture duel) is submitted.
 
-| Request | Body | Result |
+---
+
+## Chess Rules & Custom Capture Resolution
+
+- Authoritative move validation via `chess.js`, including **check, checkmate, stalemate, castling, en passant, and 4-choice promotion**.
+- **Non-capture moves** apply immediately on the board.
+- **Capture moves** freeze the board and launch a real-time 3D duel (`duel_intro` → `active_duel` → `duel_result`):
+  - **Attacker Wins**: The capture (and any pending Pawn promotion) is committed on the chessboard, and the turn passes to the defender's side.
+  - **Defender Wins**: The attacking piece is **destroyed and removed from its origin square**, the defending piece survives on its square, castling rights update accurately if a home-square Rook was lost, and the turn passes to the defender's side.
+  - **King Duel Rule**: Kings are never captured without a fight, but if a King initiates a capture duel and loses, that King's side immediately loses the match (`king_duel_lost`).
+  - **Discovered-Check King Safety Rule**: If an attacking piece loses a duel and its removal exposes its own King to a discovered attack as the turn passes to the defender, the defender immediately wins the match (`king_exposed_after_failed_capture`).
+  - **Duel Timeout (90s)**: Higher remaining HP wins the duel; exact equal HP ends the match in a draw (`duel_timeout_tie`).
+
+---
+
+## 3D Tabletop Arena & Obstacles
+
+- **Chessboard Footprint**: `8×8` world units (`[-4, 4]` on X and Z, `1.0` unit per square).
+- **Tabletop Boundary**: `14×14` world units (`[-7, 7]` on X and Z), enforced as a hard server-side perimeter with a glowing blue boundary rail.
+- **Spawns & Clear Fighting Lane**: Fighters spawn `5.0` units apart facing each other around the contested capture midpoint, with a `2.5`-unit clearance radius that temporarily hides adjacent board pieces for the duel so neither fighter starts boxed in.
+- **Destructible Obstacles (3 Hits / 75 HP)**:
+  - All remaining non-dueling chess pieces outside the `2.5u` spawn clearance plus **4 fixed outer-tabletop props** (2 translucent tumbler glasses at `(-5.5, -5.5)` / `(5.5, 5.5)` and 2 ceramic plant vases at `(-5.5, 5.5)` / `(5.5, -5.5)`).
+  - Obstacles block projectiles and break after **3 hits** for the remainder of that duel (collateral damage in a duel never removes non-dueling pieces from the actual chess game).
+
+---
+
+## Class Abilities & Gesture Controls (100 HP Baseline)
+
+Every fighter enters each duel with **100 HP** and moves at **3.5 units/sec** while auto-facing their opponent.
+- **Movement**: Lean your upper torso forward/back to advance/retreat and left/right to strafe around your opponent (or use `WASD` / Arrow keys in Dev Mode). Tracking loss `> 300 ms` automatically halts movement velocity.
+
+| Class | Gesture | Ability & Balance Tuning |
 | --- | --- | --- |
-| `GET /health` | — | Server health |
-| `POST /rooms` | `{}` | Room code, white player token, snapshot |
-| `POST /rooms/:id/join` | `{}` | Black player token, snapshot |
-| `GET /rooms/:id` | — | Current snapshot |
-| `GET /rooms/:id/events` | — | Live snapshot stream |
-| `POST /rooms/:id/move` | `{"from":12,"to":28,"revision":0}` | Updated snapshot |
-| `POST /rooms/:id/cast` | `{"battleId":"...","commandId":"unique-id","spell":"attack"}` | Updated snapshot |
+| **♙ Pawn** | **Sweep right wrist** horizontally across chest<br>**Hold left upright open palm** | **Slash**: `18 dmg` melee arc (`2.2u` range, `120°` arc, `1.2s` CD)<br>**Parry**: Blocks `100%` of incoming damage for up to `1.0s` while held (`3.0s` CD after release) |
+| **♖ Rook** | **Extend right arm** straight forward (drop arm to re-arm) | **Cannon Shot**: `16 dmg` fast projectile (`10 u/s`, `1.5s` CD)<br>**Cannon Bomb**: Every **3rd accepted shot** fires an AoE bomb dealing `28 dmg` in a `2.0u` splash radius |
+| **♘ Knight** | **Cross forearms** at chest, then **rapidly separate** horizontally | **Teleport Cleave**: Teleports up to `4.5u` to land `1.5u` in front of opponent + `0.35s` windup + `24 dmg` slash (`2.5u` radius, `4.5s` CD). Fails safely without consuming CD if blocked or out of range |
+| **♗ Bishop** | **Cock right hand** near right shoulder, then **thrust forward** | **Ice Bolt**: `14 dmg` frost projectile (`8 u/s`, `2.5s` CD). Opponent hit applies `4.0s` chill (`40%` slow + `3 dmg/s` DoT). Obstacle hit freezes obstacle for `4.0s` and spawns a `1.5u` ice puddle (`40%` slow + `3 dmg/s` DoT) |
+| **♕ Queen** | **Raise both open palms** to shoulder height and **push forward** | **Seeking Volley**: Fires `3` homing arcane orbs (`-18°, 0°, +18°`, `3 × 9 = 27 dmg`, `7 u/s`, `3.5s` CD). Each orb deals `1` hit to obstacles, breaking a 3-hit obstacle in one full volley |
+| **♔ King** | **Clasp both hands** at chest center and **hold for 0.4s** | **Royal Summon**: Spawns `1` random ally (`Pawn`, `Rook`, `Knight`, `Bishop`, or `Queen`, max `1` active, `1 HP`, `12s` duration, `6.0s` CD) that approaches the enemy and attacks every `2.0s` for `50%` of that class's base damage |
 
-All room endpoints except create/join require `Authorization: Bearer <player-token>`. Keep tokens private and retain them to reconnect. SSE should use streaming `fetch` so the browser can send this header. Serve the future UI from the backend origin or use a development proxy.
+---
 
-Squares are integers: `a1=0`, `h1=7`, `a2=8`, `a8=56`, `h8=63`. Snapshots include `serverTime`, `ready`, `legalMoves` (square number to destination list), and `game`; game includes `board`, `turn`, `phase`, `battle`, `winner`, and `revision`. Both players must join before moving. Each board entry is a piece or `null`.
+## WebSocket Protocol (`/ws`)
 
-Moves require the current revision; stale commands return HTTP 409 with a fresh snapshot. Spells use the current battle ID and a unique command ID; retry the same ID to avoid casting twice. They do not require a revision, so simultaneous casts can both succeed. Valid spells: `attack`, `defense`, `special`. An invalid command returns 400, missing credentials 401, full room 409. Reconnect to the event stream to receive a full snapshot.
+The server (`apps/server`) and web client (`apps/web`) communicate over `/ws` using strictly validated JSON messages defined in `@let-him-rook/shared`:
 
-## AI extension
-
-`src/ai.ts` defines an optional provider interface for position explanations. It receives a copied game state and has a five-second timeout. No provider, endpoint, paid call, or credentials are configured yet. AI never decides legal moves or battle outcomes. Add the hackathon provider once available; keep its API key on the server.
-
-## Current limits
-
-Rooms live in memory and disappear on restart. Disconnected players can reconnect with their token; their battle keeps running. Board turns have no timeout yet. Empty connections do not forfeit a game. Rooms with no event streams expire after two hours of inactivity. This is a trusted-LAN prototype, not a public deployment with accounts, TLS, and abuse protection.
-
-Next: webcam tracing and gesture recognition, then the final UI. The test screen uses plain browser JavaScript with no frontend build step.
-
-## Webcam spell drawing
-
-Restart the server after this update, then refresh the browser. The **Spell practice** pad works before joining a room.
-
-- Click **Enable camera**, allow access, and show one hand. Open your thumb and index finger first.
-- Pinch thumb and index finger, move your index fingertip to draw, then release.
-- Straight line in any direction: attack. Circle either direction: shield. Upright Z (or traced backwards): special.
-- Practice is the default. Check **Cast spells during battle** to send recognized spells to the current battle. Server cooldowns still apply.
-- With the camera off, drag on the pad to test the same recognizer using your mouse.
-- Tracking gaps up to 300 ms preserve the stroke; longer gaps, switching tabs, or a changed battle cancel it. Open your fingers for 120 ms to finish a stroke. Wide and tall Z shapes are supported. Stop camera releases the webcam.
-- Use the camera in just one tab when testing on one laptop. The other player can use spell buttons.
-- Camera use requires localhost or HTTPS. Plain HTTP over a LAN IP supports the game but not webcam access; HTTPS setup is needed for the second laptop.
-- MediaPipe 0.10.14 and its model load from jsDelivr/Google on first use; internet is currently required. No video is uploaded. Tracking runs in a worker.
-- Recognition thresholds are provisional and need real-camera testing. Board gestures are available; menu gestures are available in Menu hands mode.
-
-Hand tracking reference: https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker/web_js
-
-The camera panel shows rolling one-second camera FPS, tracking FPS (completed hand checks), worker detection time, hand/pinch state, and hand-loss episodes since camera start. Camera FPS measures presented video frames; unsupported browsers show N/A. Tracking FPS counts checks even when no hand is found. Counters pause in hidden tabs; restarting the camera resets the drop count. This monitor helps diagnose drops but does not change recognition thresholds.
-
-## Hand-controlled board moves
-
-Enable the camera and check **Hand-controlled moves** above the board. The middle 80% of the camera view maps to the board, mirrored like the practice pad. Both White and Black see their own board orientation.
-
-Open your thumb and index finger first. Point at your piece, pinch to grab, move to a marked square, and open your fingers to release. A white outline marks the target; legal destinations and the held piece are highlighted. Small border jitters keep the current square. The target freezes while the pinch release is confirmed, so opening your fingers does not shift the target.
-
-Release on an illegal square or outside the control area to cancel. Long tracking loss, turning off the camera, switching tabs, or a changed turn/connection also cancels a grab. Short tracking gaps keep the grab without moving it. Mouse controls remain available.
-
-During battles, the camera returns to spell drawing. Enable **Cast spells during battle** to send those spells; otherwise the spell pad stays in practice mode. Board control resumes on the next board turn. Use Menu hands mode for menu buttons.
-
-## Hand-controlled menus
-
-Enable the camera with the mouse first (browser permission still requires confirmation), then turn on **Menu hands** in the floating bar. The middle 80% of the mirrored camera view maps to the visible browser window. Point at an outlined button, make a short pinch, and release on the same button to confirm. Moving off the button, holding longer than 1.5 seconds, or losing hand tracking cancels the press.
-
-Create rooms, use the hex keypad to enter a room code, join, toggle board/live-spell controls, return to the lobby, or stop the camera. Use **Up** and **Down** to scroll. The open-join-tab link still uses the mouse because browsers can block gesture-triggered popups.
-
-Menu mode pauses board and spell gestures. Pinch **Menu hands: on** to turn it off and resume play. Menu presses have a short cooldown to prevent duplicate clicks. Turn the camera on again with the mouse after stopping it.
-
-## Solo practice bot
-
-Restart the server, refresh, and choose **Practice vs bot** (also available through hand-controlled menus). You play White, and the server controls Black. No second tab or API key is needed. Mouse, board gestures, and spell gestures work as before. Enable **Cast spells during battle** for camera spells.
-
-The bot waits one second before board moves and 1.5 seconds before its first battle action. It then considers one spell per second, obeying the same cooldowns and damage rules. It prefers captures and moving toward your king; it sometimes shields visible incoming attacks. It is a simple practice opponent, not a strong chess engine. Existing battle timeouts still apply.
-
-Practice rooms are ready immediately and cannot be joined by another player. Refresh reconnects as White. Return to the lobby and choose Practice again for a new game. If you disconnect, an active battle continues. Rooms still live in memory and disappear on server restart.
-
-API: create a solo room with POST /rooms and body {"mode":"bot"}. Default or {"mode":"pvp"} creates the normal two-player room. Snapshots include mode ("bot" or "pvp"). Bot actions run on the server and broadcast through the same live stream.
-
-## Personal pinch calibration
-
-Enable the camera, then use **Calibrate pinch** below its buttons. Keep your hand at normal playing distance. Each pose has 1.5 seconds to get ready and two seconds of recording.
-
-1. Spread thumb and index finger apart and hold steady.
-2. When prompted, click **Capture pinch**, touch thumb and index together, and hold steady.
-3. Open your fingers again, then test drawing or dragging.
-
-The setup requires at least 20 valid readings per pose and rejects overlapping or unstable readings. Good thresholds are saved locally in this browser; no images are saved or uploaded. **Restore defaults** removes saved thresholds. Cancelled or failed setup keeps previous settings. Changing camera position or playing hand may call for recalibration.
-
-Board, spell, and menu gestures pause during setup. Calibration cannot start during a battle; a new battle, hidden tab, or stopped camera cancels it. The server game itself does not pause, so calibrate before playing. Finger-distance readings now use a three-sample median filter to reject isolated spikes. Existing 120 ms release confirmation and 300 ms tracking-loss grace still apply. Detector settings are unchanged for comparison.
-
-Pinch calibration now places both thresholds close to measured fingertip contact. A small separation releases the pinch; the wide-open pose only verifies that the samples are distinct. A small gap between the close/release thresholds plus distance filtering prevents flickering. Recalibrate once after this update: old broad-release profiles are not loaded. Actual physical contact cannot be guaranteed from a single webcam image.
+- **Client → Server (`ClientMessage`)**:
+  - `create_room` (`{ mode?: 'pvp' | 'bot' }`)
+  - `join_room` (`{ roomId: string }`)
+  - `reconnect_room` (`{ roomId: string, token: string }`) — restores session within a `30s` disconnect grace window
+  - `calibration_ready` (`{ ready: boolean }`)
+  - `chess_move_intent` (`{ from, to, promotion?, actionId }`)
+  - `duel_move_intent` (`{ moveX, moveZ, actionId }`)
+  - `duel_ability_intent` (`{ ability, parryHolding?, actionId }`)
+  - `request_ai_advice` (`{}`)
+  - `ping` (`{ timestamp }`)
+- **Server → Client (`ServerMessage`)**:
+  - `room_joined` (`{ roomId, color, token, mode }`)
+  - `snapshot` (`{ snapshot: MatchSnapshot }`) — monotonic `revision`, broadcasted on board updates and at `20 Hz` (`50 ms`) during active duels
+  - `duel_events` (`{ events: DuelEvent[] }`) — combat telemetry for VFX (`projectile_spawn`, `projectile_hit`, `melee_hit`, `parry_blocked`, `teleport`, `obstacle_damage`, `obstacle_broken`, `ice_hazard_spawn`, `summon_ally`, `duel_end`)
+  - `action_feedback` (`{ actionId, accepted, reason? }`)
+  - `ai_advice` (`{ advice: string }`)
+  - `error` (`{ code, message }`)
+  - `pong` (`{ timestamp }`)

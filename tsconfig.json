@@ -6,8 +6,17 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true,
-    "types": ["node"]
+    "erasableSyntaxOnly": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@let-him-rook/shared": ["packages/shared/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/src/**/*.tsx",
+    "tests/**/*.ts"
+  ]
 }

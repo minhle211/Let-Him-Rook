@@ -1,0 +1,16 @@
+{
+  "name": "@let-him-rook/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@let-him-rook/shared": "*",
+    "@mediapipe/tasks-vision": "^0.10.14"
+  }
+}

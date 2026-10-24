@@ -1,0 +1,556 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Canvas } from '@react-three/fiber';
+import {
+  getPieceFromFen,
+  type AbilityType,
+  type BoardSquare,
+  type MatchMode,
+  type PieceClass,
+  type PromotionPieceClass,
+} from '@let-him-rook/shared';
+import { DuelEntities } from './arena/DuelEntities.tsx';
+import { TabletopArena } from './arena/TabletopArena.tsx';
+import { CalibrationOverlay } from './components/CalibrationOverlay.tsx';
+import { LobbyScreen } from './components/LobbyScreen.tsx';
+import { MatchHUD } from './components/MatchHUD.tsx';
+import { PromotionModal } from './components/PromotionModal.tsx';
+import {
+  DEFAULT_CALIBRATION,
+  loadSavedCalibration,
+  type CalibrationProfile,
+} from './gestures/calibration.ts';
+import { ChessGestureController } from './gestures/chessGestures.ts';
+import { CombatGestureDetector, TorsoLeanController } from './gestures/combatGestures.ts';
+import { WebSocketClient } from './networking/wsClient.ts';
+import { matchStore, type MatchState } from './state/matchStore.ts';
+import { VisionManager, type VisionFrameData } from './vision/visionManager.ts';
+
+const PRIMARY_ABILITY_BY_CLASS: Record<PieceClass, AbilityType> = {
+  pawn: 'pawn_sweep',
+  rook: 'rook_shot',
+  knight: 'knight_cleave',
+  bishop: 'bishop_ice_bolt',
+  queen: 'queen_volley',
+  king: 'king_summon',
+};
+
+export const App: React.FC = () => {
+  const [matchState, setMatchState] = useState<MatchState>(matchStore.getState());
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showCalibration, setShowCalibration] = useState(false);
+  const [calibrationProfile, setCalibrationProfile] = useState<CalibrationProfile>(
+    () => loadSavedCalibration() ?? DEFAULT_CALIBRATION
+  );
+  const [lastFrameData, setLastFrameData] = useState<VisionFrameData | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const wsClientRef = useRef<WebSocketClient | null>(null);
+  const visionManagerRef = useRef<VisionManager | null>(null);
+  const calibrationProfileRef = useRef<CalibrationProfile>(calibrationProfile);
+  const showCalibrationRef = useRef<boolean>(showCalibration);
+  const chessGesturesRef = useRef<ChessGestureController>(new ChessGestureController());
+  const torsoLeanRef = useRef<TorsoLeanController>(new TorsoLeanController());
+  const combatDetectorRef = useRef<CombatGestureDetector>(new CombatGestureDetector());
+  const keysPressedRef = useRef<Set<string>>(new Set());
+
+  const actionCounterRef = useRef(0);
+
+  calibrationProfileRef.current = calibrationProfile;
+  showCalibrationRef.current = showCalibration;
+
+  // Subscribe to match store updates
+  useEffect(() => {
+    return matchStore.subscribe(state => setMatchState(state));
+  }, []);
+
+  // Initialize WebSocket client
+  useEffect(() => {
+    const ws = new WebSocketClient();
+    wsClientRef.current = ws;
+
+    ws.setListeners({
+      onJoined: ({ color, token }) => {
+        setIsLoading(false);
+        setError(null);
+        matchStore.setSession(color, token);
+        setShowCalibration(true);
+      },
+      onSnapshot: snapshot => {
+        matchStore.setSnapshot(snapshot);
+        if (snapshot.phase === 'chess_turn' || snapshot.phase === 'active_duel') {
+          setShowCalibration(false);
+        }
+      },
+      onDuelEvents: events => {
+        matchStore.addDuelEvents(events);
+      },
+      onActionFeedback: ({ accepted, reason }) => {
+        if (!accepted && reason) {
+          matchStore.showToast(`Action rejected: ${reason.replace(/_/g, ' ')}`, true);
+        }
+      },
+      onAiAdvice: advice => {
+        matchStore.setAiAdvice(advice);
+      },
+      onError: err => {
+        setIsLoading(false);
+        setError(err.message);
+      },
+    });
+
+    ws.connect();
+    return () => ws.disconnect();
+  }, []);
+
+  const isInRoom = Boolean(matchState.snapshot?.roomId || showCalibration);
+
+  // Initialize Vision Manager once when entering room/calibration (do NOT stop when closing calibration modal!)
+  useEffect(() => {
+    if (!isInRoom) return;
+
+    const vm = new VisionManager();
+    visionManagerRef.current = vm;
+
+    vm.subscribe(frameData => {
+      setLastFrameData(frameData);
+
+      // Pause live game gestures while calibration modal is open
+      if (showCalibrationRef.current) return;
+
+      const state = matchStore.getState();
+      const snapshot = state.snapshot;
+      const localColor = state.localColor;
+      const profile = calibrationProfileRef.current;
+      if (!snapshot || !localColor) return;
+
+      const now = performance.now();
+
+      // 1. Handle Promotion Modal gesture selection if active
+      if (state.promotionMove) {
+        const dominantHand = frameData.hands[0] || null;
+        const promoRes = chessGesturesRef.current.updatePromotionSelection(
+          dominantHand,
+          profile,
+          now
+        );
+        matchStore.setCursorState(
+          chessGesturesRef.current.cursorPoint,
+          chessGesturesRef.current.isPinching
+        );
+        matchStore.setPromotionHover(promoRes.hover);
+        if (promoRes.selected) {
+          const actionId = `promo_${++actionCounterRef.current}`;
+          wsClientRef.current?.send({
+            type: 'chess_move_intent',
+            from: state.promotionMove.from,
+            to: state.promotionMove.to,
+            promotion: promoRes.selected,
+            actionId,
+          });
+          matchStore.setPromotionMove(null);
+        }
+        return;
+      }
+
+      // 2. Process Chess Gestures during chess_turn
+      if (snapshot.phase === 'chess_turn' && snapshot.turn === localColor) {
+        const dominantHand = frameData.hands[0] || null;
+        const res = chessGesturesRef.current.update(
+          dominantHand,
+          localColor,
+          snapshot.legalMoves,
+          profile,
+          now
+        );
+
+        matchStore.setHoverSquare(chessGesturesRef.current.hoverSquare);
+        matchStore.setSelectedSquare(chessGesturesRef.current.selectedSquare);
+        matchStore.setCursorState(
+          chessGesturesRef.current.cursorPoint,
+          chessGesturesRef.current.isPinching
+        );
+
+        if (res.intent) {
+          const movingPiece = getPieceFromFen(snapshot.fen, res.intent.from);
+          const isPawn = movingPiece?.pieceClass === 'pawn';
+          const isPromoRank = res.intent.to[1] === (localColor === 'w' ? '8' : '1');
+
+          if (isPawn && isPromoRank) {
+            matchStore.setPromotionMove(res.intent);
+          } else {
+            const actionId = `move_${++actionCounterRef.current}`;
+            wsClientRef.current?.send({
+              type: 'chess_move_intent',
+              from: res.intent.from,
+              to: res.intent.to,
+              actionId,
+            });
+          }
+        }
+      } else {
+        matchStore.setCursorState(null, false);
+      }
+
+      // 3. Process Combat Gestures during active_duel
+      if (snapshot.phase === 'active_duel' && snapshot.duelSnapshot) {
+        // Only send camera torso-lean if no keyboard WASD keys are currently held
+        if (keysPressedRef.current.size === 0 && frameData.pose) {
+          const lean = torsoLeanRef.current.update(frameData.pose, profile, now);
+          wsClientRef.current?.send({
+            type: 'duel_move_intent',
+            moveX: lean.moveX,
+            moveZ: lean.moveZ,
+            actionId: `lean_${Math.round(now)}`,
+          });
+        }
+
+        const fighter =
+          snapshot.duelSnapshot.attacker.color === localColor
+            ? snapshot.duelSnapshot.attacker
+            : snapshot.duelSnapshot.defender;
+
+        const ability = combatDetectorRef.current.update(
+          fighter.pieceClass,
+          frameData.pose,
+          frameData.hands,
+          profile,
+          now
+        );
+
+        if (ability) {
+          const actionId = `ab_${++actionCounterRef.current}`;
+          wsClientRef.current?.send({
+            type: 'duel_ability_intent',
+            ability: ability.ability,
+            parryHolding: ability.parryHolding,
+            actionId,
+          });
+        }
+      }
+    });
+
+    if (videoRef.current) {
+      vm.start(videoRef.current).catch(err => {
+        console.warn('[App] Camera start failed or denied:', err);
+      });
+    }
+
+    return () => {
+      vm.stop();
+      visionManagerRef.current = null;
+    };
+  }, [isInRoom]);
+
+  // Dev keyboard controls (WASD / Arrow keys for duel movement + Spacebar for ability)
+  useEffect(() => {
+    const allowDev =
+      Boolean(import.meta.env.DEV) ||
+      (import.meta.env.VITE_ALLOW_DEV_CONTROLS === 'true' &&
+        typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('dev') === '1');
+    if (!allowDev) return;
+
+    const sendKeyboardMove = () => {
+      const state = matchStore.getState();
+      if (state.snapshot?.phase !== 'active_duel') return;
+      const keys = keysPressedRef.current;
+      let moveX = 0;
+      let moveZ = 0;
+      if (keys.has('w') || keys.has('arrowup')) moveZ -= 1;
+      if (keys.has('s') || keys.has('arrowdown')) moveZ += 1;
+      if (keys.has('a') || keys.has('arrowleft')) moveX -= 1;
+      if (keys.has('d') || keys.has('arrowright')) moveX += 1;
+
+      wsClientRef.current?.send({
+        type: 'duel_move_intent',
+        moveX,
+        moveZ,
+        actionId: `kb_mv_${Date.now()}`,
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (showCalibrationRef.current) return;
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        keysPressedRef.current.add(key);
+        sendKeyboardMove();
+      } else if (key === ' ' && !e.repeat) {
+        const state = matchStore.getState();
+        const duel = state.snapshot?.duelSnapshot;
+        const localColor = state.localColor;
+        if (state.snapshot?.phase === 'active_duel' && duel && localColor) {
+          e.preventDefault();
+          const fighter =
+            duel.attacker.color === localColor ? duel.attacker : duel.defender;
+          const ability = PRIMARY_ABILITY_BY_CLASS[fighter.pieceClass];
+          wsClientRef.current?.send({
+            type: 'duel_ability_intent',
+            ability,
+            actionId: `kb_ab_${++actionCounterRef.current}`,
+          });
+        }
+      } else if (key === 'shift' && !e.repeat) {
+        const state = matchStore.getState();
+        const duel = state.snapshot?.duelSnapshot;
+        const localColor = state.localColor;
+        if (state.snapshot?.phase === 'active_duel' && duel && localColor) {
+          const fighter =
+            duel.attacker.color === localColor ? duel.attacker : duel.defender;
+          if (fighter.pieceClass === 'pawn') {
+            wsClientRef.current?.send({
+              type: 'duel_ability_intent',
+              ability: 'pawn_parry',
+              parryHolding: true,
+              actionId: `kb_parry_on_${++actionCounterRef.current}`,
+            });
+          }
+        }
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (keysPressedRef.current.has(key)) {
+        keysPressedRef.current.delete(key);
+        sendKeyboardMove();
+      } else if (key === 'shift') {
+        const state = matchStore.getState();
+        const duel = state.snapshot?.duelSnapshot;
+        const localColor = state.localColor;
+        if (state.snapshot?.phase === 'active_duel' && duel && localColor) {
+          const fighter =
+            duel.attacker.color === localColor ? duel.attacker : duel.defender;
+          if (fighter.pieceClass === 'pawn') {
+            wsClientRef.current?.send({
+              type: 'duel_ability_intent',
+              ability: 'pawn_parry',
+              parryHolding: false,
+              actionId: `kb_parry_off_${++actionCounterRef.current}`,
+            });
+          }
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      if (keysPressedRef.current.size > 0) {
+        sendKeyboardMove();
+      }
+    }, 80);
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
+  const handleCreateRoom = (mode: MatchMode) => {
+    setIsLoading(true);
+    setError(null);
+    wsClientRef.current?.send({ type: 'create_room', mode });
+  };
+
+  const handleJoinRoom = (roomId: string) => {
+    setIsLoading(true);
+    setError(null);
+    wsClientRef.current?.send({ type: 'join_room', roomId });
+  };
+
+  const handleCalibrationComplete = (profile: CalibrationProfile) => {
+    setCalibrationProfile(profile);
+    setShowCalibration(false);
+    wsClientRef.current?.send({ type: 'calibration_ready', ready: true });
+  };
+
+  const handleLeaveRoom = () => {
+    setShowCalibration(false);
+    matchStore.clearSession();
+    wsClientRef.current?.disconnect();
+    wsClientRef.current?.connect();
+  };
+
+  const handlePromotionSelect = (piece: PromotionPieceClass) => {
+    const move = matchState.promotionMove;
+    if (move) {
+      const actionId = `promo_${++actionCounterRef.current}`;
+      wsClientRef.current?.send({
+        type: 'chess_move_intent',
+        from: move.from,
+        to: move.to,
+        promotion: piece,
+        actionId,
+      });
+      matchStore.setPromotionMove(null);
+    }
+  };
+
+  const handleSquareClick = (square: BoardSquare) => {
+    const snapshot = matchState.snapshot;
+    const localColor = matchState.localColor;
+    if (!snapshot || snapshot.phase !== 'chess_turn' || snapshot.turn !== localColor) return;
+
+    if (!matchState.selectedSquare) {
+      if (snapshot.legalMoves[square]?.length) {
+        matchStore.setSelectedSquare(square);
+      }
+    } else {
+      const from = matchState.selectedSquare;
+      if (square === from) {
+        matchStore.setSelectedSquare(null);
+        return;
+      }
+      const validDests = snapshot.legalMoves[from];
+      if (validDests && validDests.includes(square)) {
+        const movingPiece = getPieceFromFen(snapshot.fen, from);
+        const isPawn = movingPiece?.pieceClass === 'pawn';
+        const isPromoRank = square[1] === (localColor === 'w' ? '8' : '1');
+        if (isPawn && isPromoRank) {
+          matchStore.setPromotionMove({ from, to: square });
+        } else {
+          const actionId = `click_move_${++actionCounterRef.current}`;
+          wsClientRef.current?.send({
+            type: 'chess_move_intent',
+            from,
+            to: square,
+            actionId,
+          });
+        }
+        matchStore.setSelectedSquare(null);
+      } else if (snapshot.legalMoves[square]?.length) {
+        // Clicked a different friendly piece with legal moves: switch selection
+        matchStore.setSelectedSquare(square);
+      } else {
+        matchStore.setSelectedSquare(null);
+      }
+    }
+  };
+
+  const handleDevAbility = (ability: AbilityType, parryHolding?: boolean) => {
+    const actionId = `dev_ab_${++actionCounterRef.current}`;
+    wsClientRef.current?.send({
+      type: 'duel_ability_intent',
+      ability,
+      parryHolding,
+      actionId,
+    });
+  };
+
+  const handleRequestAdvice = () => {
+    wsClientRef.current?.send({ type: 'request_ai_advice' });
+  };
+
+  const legalDestinations =
+    matchState.selectedSquare && matchState.snapshot?.legalMoves
+      ? matchState.snapshot.legalMoves[matchState.selectedSquare] || []
+      : [];
+
+  const obstacles = matchState.snapshot?.duelSnapshot?.obstacles || [];
+
+  const isDuelCameraActive =
+    matchState.snapshot?.phase === 'active_duel' ||
+    matchState.snapshot?.phase === 'duel_intro' ||
+    matchState.snapshot?.phase === 'duel_result';
+
+  return (
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      {/* Single Persistent Video for Webcam Tracking (Offscreen with active GPU decoding) */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        autoPlay
+        style={{
+          position: 'fixed',
+          top: -9999,
+          left: -9999,
+          width: 640,
+          height: 480,
+          opacity: 0,
+          pointerEvents: 'none',
+          zIndex: -999,
+        }}
+      />
+
+      {/* 3D WebGL Canvas */}
+      <Canvas
+        shadows
+        camera={{ position: [0, 8.8, 8.2], fov: 45 }}
+        style={{ width: '100%', height: '100%' }}
+      >
+        <ambientLight intensity={0.75} />
+        <directionalLight
+          position={[6, 12, 6]}
+          intensity={1.25}
+          castShadow
+          shadow-mapSize={[1024, 1024]}
+        />
+        <pointLight position={[-6, 6, -6]} intensity={0.5} />
+
+        <TabletopArena
+          hoverSquare={matchState.hoverSquare}
+          selectedSquare={matchState.selectedSquare}
+          legalDestinations={legalDestinations}
+          obstacles={obstacles}
+          fen={matchState.snapshot?.fen}
+          phase={matchState.snapshot?.phase}
+          onSquareClick={handleSquareClick}
+        />
+
+        <DuelEntities
+          interpolation={matchState.interpolation}
+          localColor={matchState.localColor}
+          isDuelActive={isDuelCameraActive}
+          visualEffects={matchState.visualEffects}
+        />
+      </Canvas>
+
+      {/* HUD Overlays */}
+      <MatchHUD
+        snapshot={matchState.snapshot}
+        localColor={matchState.localColor}
+        videoRef={videoRef}
+        lastFrameData={lastFrameData}
+        cursorPoint={matchState.cursorPoint}
+        isPinching={matchState.isPinching}
+        onDevAbility={handleDevAbility}
+        onRequestAdvice={handleRequestAdvice}
+        onOpenCalibration={() => setShowCalibration(true)}
+        onLeaveRoom={handleLeaveRoom}
+        aiAdviceText={matchState.aiAdvice}
+        toast={matchState.feedbackToast}
+      />
+
+      {/* Promotion Choice Modal */}
+      {matchState.promotionMove && (
+        <PromotionModal
+          onSelect={handlePromotionSelect}
+          hoverChoice={matchState.promotionHover}
+        />
+      )}
+
+      {/* Calibration Overlay */}
+      {showCalibration && (
+        <CalibrationOverlay
+          videoRef={videoRef}
+          lastFrameData={lastFrameData}
+          onComplete={handleCalibrationComplete}
+        />
+      )}
+
+      {/* Lobby Screen */}
+      {!matchState.snapshot && (
+        <LobbyScreen
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+          isLoading={isLoading}
+          error={error}
+        />
+      )}
+    </div>
+  );
+};
