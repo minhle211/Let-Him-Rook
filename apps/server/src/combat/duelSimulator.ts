@@ -4,6 +4,7 @@ import {
   DUEL_DURATION_MS,
   FIGHTER_MAX_HP,
   FIGHTER_MOVE_SPEED,
+  FIGHTER_TURN_SPEED,
   FIGHTER_RADIUS,
   FIXED_PROPS,
   LEAN_DEADZONE,
@@ -123,6 +124,7 @@ export function createDuel(
     x: attPos.x,
     z: attPos.z,
     facingRad: Math.atan2(defPos.x - attPos.x, -(defPos.z - attPos.z)),
+    turnRate: 0,
     vx: 0,
     vz: 0,
     isParrying: false,
@@ -142,6 +144,7 @@ export function createDuel(
     x: defPos.x,
     z: defPos.z,
     facingRad: Math.atan2(attPos.x - defPos.x, -(attPos.z - defPos.z)),
+    turnRate: 0,
     vx: 0,
     vz: 0,
     isParrying: false,
@@ -245,13 +248,15 @@ export function applyMovementIntent(
   color: PlayerColor,
   moveX: number,
   moveZ: number,
-  now: number
+  now: number,
+  turnDir: number = 0
 ): void {
   if (duel.isFinished) return;
   duel.lastMoveIntentAt[color] = now;
 
   const fighter = color === duel.attacker.color ? duel.attacker : duel.defender;
-  const opponent = color === duel.attacker.color ? duel.defender : duel.attacker;
+
+  fighter.turnRate = Math.abs(turnDir) >= 0.1 ? Math.sign(turnDir) * FIGHTER_TURN_SPEED : 0;
 
   const mag = Math.hypot(moveX, moveZ);
   if (mag < LEAN_DEADZONE) {
@@ -260,12 +265,9 @@ export function applyMovementIntent(
     return;
   }
 
-  // Opponent-relative forward and right vectors
-  const toOppX = opponent.x - fighter.x;
-  const toOppZ = opponent.z - fighter.z;
-  const dist = Math.hypot(toOppX, toOppZ) || 1;
-  const fwdX = toOppX / dist;
-  const fwdZ = toOppZ / dist;
+  // Aim-relative forward and right vectors
+  const fwdX = Math.sin(fighter.facingRad);
+  const fwdZ = -Math.cos(fighter.facingRad);
   const rightX = -fwdZ;
   const rightZ = fwdX;
 
@@ -412,12 +414,9 @@ export function applyAbilityIntent(
         ? CLASS_ABILITY_CONFIG.rook.cannonBomb.radius
         : CLASS_ABILITY_CONFIG.rook.shot.radius;
 
-      // Projectile directed at opponent
-      const dx = opponent.x - fighter.x;
-      const dz = opponent.z - fighter.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      const vx = (dx / dist) * speed;
-      const vz = (dz / dist) * speed;
+      // Projectile directed along fighter facingRad aim
+      const vx = Math.sin(fighter.facingRad) * speed;
+      const vz = -Math.cos(fighter.facingRad) * speed;
 
       duel.projectiles.push({
         id: generateId('proj_rook'),
@@ -496,12 +495,9 @@ export function applyAbilityIntent(
       }
       fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.bishop.iceBolt.cooldownMs;
 
-      const dx = opponent.x - fighter.x;
-      const dz = opponent.z - fighter.z;
-      const dist = Math.hypot(dx, dz) || 1;
       const speed = CLASS_ABILITY_CONFIG.bishop.iceBolt.speed;
-      const vx = (dx / dist) * speed;
-      const vz = (dz / dist) * speed;
+      const vx = Math.sin(fighter.facingRad) * speed;
+      const vz = -Math.cos(fighter.facingRad) * speed;
 
       duel.projectiles.push({
         id: generateId('proj_bishop'),
@@ -529,9 +525,7 @@ export function applyAbilityIntent(
       }
       fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.queen.volley.cooldownMs;
 
-      const dx = opponent.x - fighter.x;
-      const dz = opponent.z - fighter.z;
-      const baseAngle = Math.atan2(dx, -dz);
+      const baseAngle = fighter.facingRad;
       const speed = CLASS_ABILITY_CONFIG.queen.volley.speed;
 
       for (const offsetDeg of CLASS_ABILITY_CONFIG.queen.volley.fanAnglesDeg) {
@@ -625,14 +619,19 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
   for (const fighter of fighters) {
     const opponent = fighter === duel.attacker ? duel.defender : duel.attacker;
 
-    // Tracking loss check (zero velocity if no input for > 300ms)
+    // Tracking loss check (zero velocity and rotation if no input for > 300ms)
     if (now - duel.lastMoveIntentAt[fighter.color] > TRACKING_LOSS_STOP_MS) {
       fighter.vx = 0;
       fighter.vz = 0;
+      fighter.turnRate = 0;
     }
 
-    // Auto-facing towards opponent
-    fighter.facingRad = Math.atan2(opponent.x - fighter.x, -(opponent.z - fighter.z));
+    // Manual rotation integration
+    if (fighter.turnRate) {
+      fighter.facingRad += fighter.turnRate * dtSec;
+      while (fighter.facingRad > Math.PI) fighter.facingRad -= Math.PI * 2;
+      while (fighter.facingRad < -Math.PI) fighter.facingRad += Math.PI * 2;
+    }
 
     // Parry hold decay
     if (fighter.isParrying) {

@@ -25,8 +25,15 @@ import {
   saveCalibrationProfile,
   type CalibrationProfile,
 } from './gestures/calibration.ts';
-import { ChessGestureController } from './gestures/chessGestures.ts';
-import { CombatGestureDetector, TorsoLeanController } from './gestures/combatGestures.ts';
+import {
+  ChessGestureController,
+} from './gestures/chessGestures.ts';
+import {
+  CombatGestureDetector,
+  LeftHandCameraController,
+  TorsoLeanController,
+  type CameraTurnIntent,
+} from './gestures/combatGestures.ts';
 import { WebSocketClient } from './networking/wsClient.ts';
 import { matchStore, type MatchState } from './state/matchStore.ts';
 import { VisionManager, type VisionFrameData } from './vision/visionManager.ts';
@@ -61,6 +68,11 @@ export const App: React.FC = () => {
     leanZ: number;
     inDeadzone: boolean;
   } | null>(null);
+  const [cameraTelemetry, setCameraTelemetry] = useState<CameraTurnIntent>({
+    turnDir: 0,
+    tilt: 0,
+    active: false,
+  });
   const [usingKeyboard, setUsingKeyboard] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -70,8 +82,11 @@ export const App: React.FC = () => {
   const showCalibrationRef = useRef<boolean>(showCalibration);
   const chessGesturesRef = useRef<ChessGestureController>(new ChessGestureController());
   const torsoLeanRef = useRef<TorsoLeanController>(new TorsoLeanController());
+  const leftCameraRef = useRef<LeftHandCameraController>(new LeftHandCameraController());
   const combatDetectorRef = useRef<CombatGestureDetector>(new CombatGestureDetector());
   const keysPressedRef = useRef<Set<string>>(new Set());
+  const cameraTelemetryRef = useRef<CameraTurnIntent>(cameraTelemetry);
+  cameraTelemetryRef.current = cameraTelemetry;
 
   const actionCounterRef = useRef(0);
   const actionPrefixRef = useRef(crypto.randomUUID());
@@ -143,7 +158,11 @@ export const App: React.FC = () => {
     return () => ws.disconnect();
   }, []);
 
-  useEffect(() => { torsoLeanRef.current.reset(); }, [calibrationProfile, matchState.snapshot?.phase, showCalibration]);
+  useEffect(() => {
+    torsoLeanRef.current.reset();
+    leftCameraRef.current.reset();
+    combatDetectorRef.current.reset();
+  }, [calibrationProfile, matchState.snapshot?.phase, showCalibration]);
 
   const isInRoom = Boolean(matchState.snapshot?.roomId || showCalibration);
 
@@ -242,12 +261,16 @@ export const App: React.FC = () => {
           const inDeadzone = Math.hypot(lean.moveX, lean.moveZ) < 0.05;
           setTorsoTelemetry({ leanX: lean.moveX, leanZ: lean.moveZ, inDeadzone });
 
-          // Only send camera torso-lean if no keyboard WASD keys are currently held
+          const camTurn = leftCameraRef.current.update(frameData.hands, frameData.pose, now, profile);
+          setCameraTelemetry(camTurn);
+
+          // Only send camera torso-lean & turn if no keyboard WASD/QE keys are currently held
           if (keysPressedRef.current.size === 0) {
             wsClientRef.current?.send({
               type: 'duel_move_intent',
               moveX: lean.moveX,
               moveZ: lean.moveZ,
+              turnDir: camTurn.turnDir,
               actionId: `${actionPrefixRef.current}_lean_${Math.round(now)}`,
             });
           }
@@ -293,7 +316,7 @@ export const App: React.FC = () => {
     };
   }, [isInRoom]);
 
-  // Dev keyboard controls (WASD / Arrow keys for duel movement + Spacebar for ability)
+  // Dev keyboard controls (WASD / Arrow keys for duel movement, Q/E for camera rotation + Spacebar for ability)
   useEffect(() => {
     const sendKeyboardMove = () => {
       const state = matchStore.getState();
@@ -301,15 +324,23 @@ export const App: React.FC = () => {
       const keys = keysPressedRef.current;
       let moveX = 0;
       let moveZ = 0;
+      let turnDir = 0;
       if (keys.has('w') || keys.has('arrowup')) moveZ -= 1;
       if (keys.has('s') || keys.has('arrowdown')) moveZ += 1;
       if (keys.has('a') || keys.has('arrowleft')) moveX -= 1;
       if (keys.has('d') || keys.has('arrowright')) moveX += 1;
+      if (keys.has('q')) turnDir -= 1;
+      if (keys.has('e')) turnDir += 1;
+
+      if (turnDir === 0 && cameraTelemetryRef.current.turnDir !== 0) {
+        turnDir = cameraTelemetryRef.current.turnDir;
+      }
 
       wsClientRef.current?.send({
         type: 'duel_move_intent',
         moveX,
         moveZ,
+        turnDir,
         actionId: `${actionPrefixRef.current}_kb_mv_${Date.now()}`,
       });
     };
@@ -317,7 +348,7 @@ export const App: React.FC = () => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (showCalibrationRef.current || matchStore.getState().snapshot?.paused) return;
       const key = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+      if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         keysPressedRef.current.add(key);
         setUsingKeyboard(true);
         sendKeyboardMove();
@@ -403,6 +434,7 @@ export const App: React.FC = () => {
       keysPressedRef.current.clear();
       setUsingKeyboard(false);
       torsoLeanRef.current.reset();
+      leftCameraRef.current.reset();
       combatDetectorRef.current = new CombatGestureDetector();
       chessGesturesRef.current = new ChessGestureController();
     }
@@ -684,7 +716,9 @@ export const App: React.FC = () => {
         />
       </Canvas>
 
-      <div style={{position:'absolute',bottom:8,left:8,zIndex:20}}><BodyMovementGuide profile={calibrationProfile} pose={lastFrameData?.pose ?? null}/></div>
+      <div style={{position:'absolute',bottom:8,left:8,zIndex:20}}>
+        <BodyMovementGuide profile={calibrationProfile} pose={lastFrameData?.pose ?? null} cameraTurn={cameraTelemetry} />
+      </div>
       {/* HUD Overlays */}
       <MatchHUD
         snapshot={matchState.snapshot}
@@ -702,6 +736,7 @@ export const App: React.FC = () => {
         onToggleSandbox={() => setIsSandboxOpen(v => !v)}
         isSandboxOpen={isSandboxOpen}
         torsoLean={torsoTelemetry}
+        cameraTurn={cameraTelemetry}
         usingKeyboard={usingKeyboard}
         connected={connected}
       />

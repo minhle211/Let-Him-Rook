@@ -23,7 +23,7 @@ export type ClientMessage =
       promotion?: PromotionPieceClass;
       actionId: string;
     }
-  | { type: 'duel_move_intent'; moveX: number; moveZ: number; actionId: string }
+  | { type: 'duel_move_intent'; moveX: number; moveZ: number; turnDir?: number; actionId: string }
   | {
       type: 'duel_ability_intent';
       ability: AbilityType;
@@ -196,12 +196,17 @@ export function parseClientMessage(raw: string): ClientMessage {
       if (typeof obj.actionId !== 'string') {
         throw new Error('Invalid actionId');
       }
+      if (obj.turnDir !== undefined && typeof obj.turnDir !== 'number') {
+        throw new Error('turnDir must be a number');
+      }
       const moveX = Math.max(-1, Math.min(1, obj.moveX));
       const moveZ = Math.max(-1, Math.min(1, obj.moveZ));
+      const turnDir = obj.turnDir !== undefined ? Math.max(-1, Math.min(1, obj.turnDir)) : undefined;
       return {
         type: 'duel_move_intent',
         moveX,
         moveZ,
+        turnDir,
         actionId: obj.actionId,
       };
     }

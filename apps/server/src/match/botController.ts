@@ -64,6 +64,13 @@ export class BotController {
       const fighter = match.duel.defender.color === 'b' ? match.duel.defender : match.duel.attacker;
       const opponent = match.duel.defender.color === 'b' ? match.duel.attacker : match.duel.defender;
 
+      // Compute bot turn direction toward opponent
+      const desiredFacing = Math.atan2(opponent.x - fighter.x, -(opponent.z - fighter.z));
+      let angleDiff = desiredFacing - fighter.facingRad;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      const turnDir = Math.abs(angleDiff) > 0.08 ? (angleDiff > 0 ? 1 : -1) : 0;
+
       const dist = Math.hypot(opponent.x - fighter.x, opponent.z - fighter.z);
       let moveZ = 0;
       let moveX = Math.sin(now / 650) * 0.55;
@@ -75,7 +82,7 @@ export class BotController {
         } else if (dist < 1.6) {
           moveZ = 0.5;
         }
-        match.handleDuelMove('b', moveX, moveZ, `bot_mv_${now}`, now);
+        match.handleDuelMove('b', moveX, moveZ, `bot_mv_${now}`, now, turnDir);
         return;
       }
 
@@ -103,7 +110,7 @@ export class BotController {
         }
       }
 
-      match.handleDuelMove('b', moveX, moveZ, `bot_mv_${now}`, now);
+      match.handleDuelMove('b', moveX, moveZ, `bot_mv_${now}`, now, turnDir);
 
       // Trigger ability on cooldown
       if (now >= this.nextAbilityAt && now >= fighter.cooldowns.primary) {

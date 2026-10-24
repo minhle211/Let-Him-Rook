@@ -7,6 +7,7 @@ export const SPAWN_CLEAR_RADIUS = 2.5;
 
 export const FIGHTER_MAX_HP = 100;
 export const FIGHTER_MOVE_SPEED = 3.5;
+export const FIGHTER_TURN_SPEED = 1.1; // ~63 deg/sec manual rotation speed
 export const FIGHTER_RADIUS = 0.45;
 
 export const OBSTACLE_MAX_HITS = 3;

@@ -239,6 +239,7 @@ test('Duel Simulator: Bishop Ice Bolt freezes obstacle and creates 1.5u ice haza
   duel.attacker.z = targetObs.z + 2.0;
   duel.defender.x = targetObs.x;
   duel.defender.z = targetObs.z - 4.0;
+  duel.attacker.facingRad = 0; // facing negative Z directly at obstacle
 
   applyAbilityIntent(duel, 'w', 'bishop_ice_bolt', undefined, 1000);
   assert.equal(duel.projectiles.length, 1);
@@ -271,6 +272,7 @@ test('Duel Simulator: Queen 3-orb volley inflicts 3 hits and breaks a 3-hit obst
   duel.attacker.z = targetObs.z + 1.5;
   duel.defender.x = targetObs.x;
   duel.defender.z = targetObs.z - 3.0;
+  duel.attacker.facingRad = 0; // facing negative Z directly at obstacle
 
   applyAbilityIntent(duel, 'w', 'queen_volley', undefined, 1000);
   assert.equal(duel.projectiles.length, 3);
@@ -349,4 +351,43 @@ test('Duel Simulator: King summoned 1-HP ally takes damage and is destroyed by e
 
   // Ally must take lethal damage and be removed from active allies
   assert.equal(duel.allies.length, 0, '1-HP ally must be destroyed upon taking damage');
+});
+
+test('Duel Simulator: Manual rotation and aim-relative movement integration', () => {
+  const pending = {
+    from: 'e2' as const,
+    to: 'e7' as const,
+    attackerColor: 'w' as const,
+    attackerClass: 'rook' as const,
+    defenderClass: 'rook' as const,
+  };
+  const duel = createDuel(DUMMY_FEN, pending, 1000);
+
+  // Initial facing is set facing opponent, turnRate is 0
+  assert.equal(duel.attacker.turnRate, 0);
+  const initialFacing = duel.attacker.facingRad;
+
+  // 1. Step without turning: facingRad remains steady, does not snap
+  stepDuel(duel, 1050);
+  assert.equal(duel.attacker.facingRad, initialFacing);
+
+  // 2. Apply clockwise turn intent (turnDir = 1)
+  applyMovementIntent(duel, 'w', 0, 0, 1050, 1);
+  assert.ok(duel.attacker.turnRate > 0);
+
+  // Step 100ms (< 300ms tracking loss threshold)
+  stepDuel(duel, 1150);
+  assert.ok(duel.attacker.facingRad > initialFacing, 'Clockwise turn must increase facingRad');
+
+  // 3. Aim-relative movement: set facingRad directly to PI/2 (East, positive X)
+  duel.attacker.facingRad = Math.PI / 2;
+  applyMovementIntent(duel, 'w', 0, -1, 1550, 0); // Advance forward (moveZ = -1)
+  assert.ok(duel.attacker.vx > 3.0, 'Advancing while facing East must yield positive vx');
+  assert.ok(Math.abs(duel.attacker.vz) < 0.1, 'Advancing while facing East must yield near-zero vz');
+
+  // 4. Rook fires shot along current aim (East, positive X)
+  applyAbilityIntent(duel, 'w', 'rook_shot', undefined, 1550);
+  const proj = duel.projectiles[0];
+  assert.ok(proj.vx > 9.0, 'Rook shot should travel along facingRad direction');
+  assert.ok(Math.abs(proj.vz) < 0.1);
 });

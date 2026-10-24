@@ -4,7 +4,16 @@ import {
   type PieceClass,
 } from '@let-him-rook/shared';
 import type { Landmark3D } from '../vision/visionManager.ts';
-import { bodyMetrics, computeTorsoMetrics, DEFAULT_MOVEMENT_SENSITIVITY, isOpenPalm, type CalibrationProfile } from './calibration.ts';
+import {
+  bodyMetrics,
+  computeTorsoMetrics,
+  computeWholeHandTilt,
+  findLeftHand,
+  findRightHand,
+  DEFAULT_MOVEMENT_SENSITIVITY,
+  isOpenPalm,
+  type CalibrationProfile,
+} from './calibration.ts';
 
 export interface CombatMovementIntent {
   moveX: number;
@@ -16,14 +25,135 @@ export interface CombatAbilityIntent {
   parryHolding?: boolean;
 }
 
+export interface CameraTurnIntent {
+  turnDir: -1 | 0 | 1;
+  tilt: number;
+  active: boolean;
+}
+
+export const LEFT_CAMERA_GESTURE = {
+  tiltActivate: 0.45,
+  tiltRelease: 0.26,
+  smoothingMs: 90,
+  activationMs: 120,
+};
+
+export class LeftHandCameraController {
+  private lastTime = -Infinity;
+  private smoothedTilt = 0;
+  private turnDir: -1 | 0 | 1 = 0;
+  private candidateDir: -1 | 0 | 1 = 0;
+  private candidateSince = 0;
+
+  public reset(): void {
+    this.lastTime = -Infinity;
+    this.smoothedTilt = 0;
+    this.turnDir = 0;
+    this.candidateDir = 0;
+    this.candidateSince = 0;
+  }
+
+  public update(
+    hands: Landmark3D[][],
+    pose: Landmark3D[] | null,
+    now = performance.now(),
+    calibration?: CalibrationProfile
+  ): CameraTurnIntent {
+    // 1. Guard against two-handed abilities (crossed/clasped wrists)
+    if (pose && pose[15] && pose[16]) {
+      const wristDist = Math.hypot(pose[15].x - pose[16].x, pose[15].y - pose[16].y);
+      if (wristDist < 0.14) {
+        this.reset();
+        return { turnDir: 0, tilt: 0, active: false };
+      }
+    }
+
+    // 2. Find left hand
+    const leftHand = findLeftHand(hands, pose);
+    if (!leftHand) {
+      if (now - this.lastTime > 250) {
+        this.reset();
+      }
+      return { turnDir: 0, tilt: 0, active: false };
+    }
+
+    // 3. Compute whole-hand tilt
+    const rawTiltValue = computeWholeHandTilt(leftHand);
+    if (rawTiltValue === null) {
+      if (now - this.lastTime > 250) {
+        this.reset();
+      }
+      return { turnDir: 0, tilt: 0, active: false };
+    }
+
+    // 4. Subtract calibrated baseline tilt and clamp to [-1, 1]
+    const baseline = calibration?.cameraBaselineTilt ?? 0;
+    const rawTilt = Math.max(-1, Math.min(1, rawTiltValue - baseline));
+
+    if (now - this.lastTime > 300) {
+      this.smoothedTilt = rawTilt;
+    } else {
+      const alpha = 1 - Math.exp(-(now - this.lastTime) / LEFT_CAMERA_GESTURE.smoothingMs);
+      this.smoothedTilt += alpha * (rawTilt - this.smoothedTilt);
+    }
+    this.lastTime = now;
+
+    // 5. Sensitivity-scaled thresholds
+    const thresholds = movementThresholds(calibration?.movementSensitivity);
+    const tiltActivate = thresholds.camera;
+    const tiltRelease = thresholds.cameraRelease;
+
+    // Desired turn direction with hysteresis
+    let desired: -1 | 0 | 1 = 0;
+    if (this.turnDir === -1) {
+      desired = this.smoothedTilt >= -tiltRelease ? 0 : -1;
+    } else if (this.turnDir === 1) {
+      desired = this.smoothedTilt <= tiltRelease ? 0 : 1;
+    } else {
+      if (this.smoothedTilt <= -tiltActivate) {
+        desired = -1;
+      } else if (this.smoothedTilt >= tiltActivate) {
+        desired = 1;
+      }
+    }
+
+    // Debounce
+    if (desired !== this.candidateDir) {
+      this.candidateDir = desired;
+      this.candidateSince = now;
+    }
+
+    if (desired === 0) {
+      this.turnDir = 0;
+    } else if (now - this.candidateSince >= LEFT_CAMERA_GESTURE.activationMs) {
+      this.turnDir = desired;
+    }
+
+    return {
+      turnDir: this.turnDir,
+      tilt: this.smoothedTilt,
+      active: true,
+    };
+  }
+}
+
 export const BODY_MOVEMENT = { forward:1.20, forwardRelease:1.08, backward:0.85, backwardRelease:0.94, lateral:0.60, lateralRelease:0.40, smoothingMs:100, activationMs:100 };
 export function movementThresholds(sensitivity: CalibrationProfile['movementSensitivity']) {
   const s = { ...DEFAULT_MOVEMENT_SENSITIVITY, ...sensitivity };
+  const cameraSens = typeof s.camera === 'number' && Number.isFinite(s.camera) ? s.camera : 1;
+  const camera = Math.max(0.12, Math.min(0.75, LEFT_CAMERA_GESTURE.tiltActivate * cameraSens));
+  const cameraRelease = Math.max(0.06, Math.min(camera - 0.05, LEFT_CAMERA_GESTURE.tiltRelease * cameraSens));
   return {
-    forward: 1 + 0.20 * s.forward, forwardRelease: 1 + 0.08 * s.forward,
-    backward: 1 - 0.15 * s.backward, backwardRelease: 1 - 0.06 * s.backward,
-    left: 0.60 * s.left, leftRelease: 0.40 * s.left,
-    right: 0.60 * s.right, rightRelease: 0.40 * s.right,
+    forward: 1 + 0.20 * s.forward,
+    forwardRelease: 1 + 0.08 * s.forward,
+    backward: Math.max(0.40, Math.min(0.95, 1 - 0.15 * s.backward)),
+    backwardRelease: Math.max(0.50, Math.min(0.98, 1 - 0.06 * s.backward)),
+    left: 0.60 * s.left,
+    leftRelease: 0.40 * s.left,
+    right: 0.60 * s.right,
+    rightRelease: 0.40 * s.right,
+    camera,
+    cameraRelease,
   };
 }
 export class TorsoLeanController {
@@ -62,7 +192,9 @@ export class CombatGestureDetector {
   private candidateFrames: number = 0;
   private candidateStartedAt: number = 0;
   private isParryActive: boolean = false;
+  private lastSlashAt: number = 0;
   private prevWristPos: { x: number; y: number } | null = null;
+  private prevWristTime: number = 0;
 
   public update(
     pieceClass: PieceClass,
@@ -94,37 +226,52 @@ export class CombatGestureDetector {
     hands: Landmark3D[][],
     now: number
   ): CombatAbilityIntent | null {
-    // 1. Parry check: Left upright open palm held at chest height
-    const leftHand = hands.find(h => h.length > 0 && h[0].x < 0.5); // screen left
-    if (leftHand && isOpenPalm(leftHand)) {
-      if (!this.isParryActive) {
-        this.isParryActive = true;
-        return { ability: 'pawn_parry', parryHolding: true };
-      }
-    } else {
+    if (!pose || !pose[16]) {
       if (this.isParryActive) {
         this.isParryActive = false;
         return { ability: 'pawn_parry', parryHolding: false };
       }
+      return null;
     }
 
-    // 2. Right wrist horizontal sweep across torso
-    if (pose && pose[16]) {
-      // 16 is right wrist
-      const wrist = pose[16];
-      if (this.prevWristPos) {
-        const vx = (wrist.x - this.prevWristPos.x) / 0.05;
-        if (Math.abs(vx) > 3.0) {
-          if (this.state === 'IDLE') {
-            this.state = 'WAIT_RELEASE';
-            this.prevWristPos = { x: wrist.x, y: wrist.y };
-            return { ability: 'pawn_sweep' };
-          }
-        } else if (Math.abs(vx) < 1.0) {
-          this.state = 'IDLE';
-        }
+    const wrist = pose[16];
+    let vx = 0;
+    if (this.prevWristPos) {
+      const dt = this.prevWristTime > 0 && now - this.prevWristTime <= 300
+        ? (now - this.prevWristTime) / 1000
+        : 0.05;
+      vx = (wrist.x - this.prevWristPos.x) / (dt || 0.05);
+    }
+    this.prevWristPos = { x: wrist.x, y: wrist.y };
+    this.prevWristTime = now;
+
+    const rightHand = findRightHand(hands, pose);
+    const isRightPalmOpen = rightHand ? isOpenPalm(rightHand) : false;
+
+    // 1. If currently parrying
+    if (this.isParryActive) {
+      if (!isRightPalmOpen || Math.abs(vx) >= 1.2) {
+        this.isParryActive = false;
+        return { ability: 'pawn_parry', parryHolding: false };
       }
-      this.prevWristPos = { x: wrist.x, y: wrist.y };
+      return null;
+    }
+
+    // 2. Parry activation: stationary open right palm, IDLE state, >= 200ms after last slash
+    if (isRightPalmOpen && Math.abs(vx) < 1.2 && this.state === 'IDLE' && now - this.lastSlashAt >= 200) {
+      this.isParryActive = true;
+      return { ability: 'pawn_parry', parryHolding: true };
+    }
+
+    // 3. Slash activation: rapid horizontal right wrist sweep while NOT parrying
+    if (Math.abs(vx) > 3.0) {
+      if (this.state === 'IDLE') {
+        this.state = 'WAIT_RELEASE';
+        this.lastSlashAt = now;
+        return { ability: 'pawn_sweep' };
+      }
+    } else if (Math.abs(vx) < 1.0) {
+      this.state = 'IDLE';
     }
 
     return null;
@@ -168,24 +315,23 @@ export class CombatGestureDetector {
     hands: Landmark3D[][],
     now: number
   ): CombatAbilityIntent | null {
-    if (!pose || !pose[15] || !pose[16]) return null;
-    const lWrist = pose[15];
+    if (!pose || !pose[12] || !pose[16]) return null;
+    const rShoulder = pose[12];
     const rWrist = pose[16];
-    const wristDist = Math.hypot(lWrist.x - rWrist.x, lWrist.y - rWrist.y);
 
-    // Crossed wrists: wristDist < 0.12
-    if (this.state === 'IDLE' && wristDist < 0.12) {
+    // Arm (CANDIDATE) when right wrist is raised above right shoulder (wrist.y < shoulder.y - 0.05)
+    if (this.state === 'IDLE' && rWrist.y < rShoulder.y - 0.05) {
       this.state = 'CANDIDATE';
       this.candidateStartedAt = now;
     } else if (this.state === 'CANDIDATE') {
-      // Rapid separation: wristDist > 0.35 within 600ms
-      if (wristDist > 0.35 && now - this.candidateStartedAt < 600) {
+      // Rapid downward chop: rWrist chops below shoulder (wrist.y > shoulder.y + 0.18) within 600ms
+      if (rWrist.y > rShoulder.y + 0.18 && now - this.candidateStartedAt < 600) {
         this.state = 'WAIT_RELEASE';
         return { ability: 'knight_cleave' };
       } else if (now - this.candidateStartedAt >= 600) {
         this.state = 'IDLE';
       }
-    } else if (this.state === 'WAIT_RELEASE' && wristDist < 0.28) {
+    } else if (this.state === 'WAIT_RELEASE' && rWrist.y <= rShoulder.y + 0.12) {
       this.state = 'IDLE';
     }
 
@@ -226,27 +372,32 @@ export class CombatGestureDetector {
     hands: Landmark3D[][],
     now: number
   ): CombatAbilityIntent | null {
-    if (!pose || !pose[11] || !pose[12] || !pose[15] || !pose[16]) return null;
-    const lWrist = pose[15];
+    if (!pose || !pose[12] || !pose[16]) return null;
+    const rShoulder = pose[12];
     const rWrist = pose[16];
-    const shouldersY = (pose[11].y + pose[12].y) / 2;
+    const rightHand = findRightHand(hands, pose);
+    const isRightPalm = rightHand ? isOpenPalm(rightHand) : false;
 
-    // Both palms raised near shoulder height
-    const bothRaised = lWrist.y <= shouldersY + 0.1 && rWrist.y <= shouldersY + 0.1;
+    // Raised right wrist near/above right shoulder with open palm
+    const isRaised = rWrist.y <= rShoulder.y + 0.10 && isRightPalm;
 
-    if (this.state === 'IDLE' && bothRaised && hands.length >= 2) {
+    if (this.state === 'IDLE' && isRaised) {
       this.state = 'CANDIDATE';
       this.candidateStartedAt = now;
-      this.candidateFrames = 0;
+      this.candidateFrames = 1;
     } else if (this.state === 'CANDIDATE') {
-      this.candidateFrames++;
-      if (this.candidateFrames >= 3 && now - this.candidateStartedAt < 700) {
-        this.state = 'WAIT_RELEASE';
-        return { ability: 'queen_volley' };
-      } else if (now - this.candidateStartedAt >= 700) {
+      if (isRaised) {
+        this.candidateFrames++;
+        if (this.candidateFrames >= 3 && now - this.candidateStartedAt < 700) {
+          this.state = 'WAIT_RELEASE';
+          return { ability: 'queen_volley' };
+        } else if (now - this.candidateStartedAt >= 700) {
+          this.state = 'IDLE';
+        }
+      } else {
         this.state = 'IDLE';
       }
-    } else if (this.state === 'WAIT_RELEASE' && !bothRaised) {
+    } else if (this.state === 'WAIT_RELEASE' && !isRaised) {
       this.state = 'IDLE';
     }
 
@@ -258,26 +409,29 @@ export class CombatGestureDetector {
     hands: Landmark3D[][],
     now: number
   ): CombatAbilityIntent | null {
-    if (!pose || !pose[15] || !pose[16]) return null;
-    const lWrist = pose[15];
-    const rWrist = pose[16];
-    const wristDist = Math.hypot(lWrist.x - rWrist.x, lWrist.y - rWrist.y);
+    if (!pose || !pose[11] || !pose[12] || !pose[16]) return null;
+    const chestCenter = {
+      x: (pose[11].x + pose[12].x) / 2,
+      y: (pose[11].y + pose[12].y) / 2 + 0.06,
+    };
+    const dist = Math.hypot(pose[16].x - chestCenter.x, pose[16].y - chestCenter.y);
+    const rightHand = findRightHand(hands, pose);
+    const isFist = !rightHand || !isOpenPalm(rightHand);
 
-    // Hands clasped together at chest center (< 0.10)
-    if (this.state === 'IDLE' && wristDist < 0.10) {
+    // Hold closed right fist steady at chest center (< 0.15) for 400ms
+    if (this.state === 'IDLE' && dist < 0.15 && isFist) {
       this.state = 'CANDIDATE';
       this.candidateStartedAt = now;
     } else if (this.state === 'CANDIDATE') {
-      if (wristDist < 0.10) {
+      if (dist < 0.15 && isFist) {
         if (now - this.candidateStartedAt >= 400) {
-          // Held for 400ms steady!
           this.state = 'WAIT_RELEASE';
           return { ability: 'king_summon' };
         }
       } else {
         this.state = 'IDLE';
       }
-    } else if (this.state === 'WAIT_RELEASE' && wristDist > 0.20) {
+    } else if (this.state === 'WAIT_RELEASE' && dist > 0.22) {
       this.state = 'IDLE';
     }
 
@@ -289,6 +443,8 @@ export class CombatGestureDetector {
     this.candidateFrames = 0;
     this.candidateStartedAt = 0;
     this.isParryActive = false;
+    this.lastSlashAt = 0;
     this.prevWristPos = null;
+    this.prevWristTime = 0;
   }
 }
