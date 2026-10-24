@@ -48,10 +48,31 @@ export interface DuelSimulation {
   winner: DuelWinner;
   resolutionReason?: string;
   isFinished: boolean;
+  sandboxOptions?: {
+    godMode?: boolean;
+    noCooldowns?: boolean;
+    moveSpeedMultiplier?: number;
+  };
+  initialState?: {
+    fen: string;
+    pending: PendingCapture;
+  };
 }
 
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function applyFighterDamage(
+  fighter: FighterState,
+  damage: number,
+  godMode?: boolean
+): number {
+  if (godMode && fighter.color === 'w') {
+    return fighter.hp;
+  }
+  fighter.hp = Math.max(0, fighter.hp - damage);
+  return fighter.hp;
 }
 
 export function createDuel(
@@ -212,6 +233,10 @@ export function createDuel(
     },
     winner: null,
     isFinished: false,
+    initialState: {
+      fen,
+      pending: { ...pending },
+    },
   };
 }
 
@@ -245,6 +270,8 @@ export function applyMovementIntent(
   const rightZ = fwdX;
 
   let speed = FIGHTER_MOVE_SPEED;
+  const speedMult = duel.sandboxOptions?.moveSpeedMultiplier ?? 1.0;
+  speed *= speedMult;
   if (fighter.isChilled) {
     speed *= 1 - CLASS_ABILITY_CONFIG.bishop.iceBolt.chillSlowFactor;
   }
@@ -266,6 +293,11 @@ export function applyAbilityIntent(
 
   const fighter = color === duel.attacker.color ? duel.attacker : duel.defender;
   const opponent = color === duel.attacker.color ? duel.defender : duel.attacker;
+
+  if (duel.sandboxOptions?.noCooldowns) {
+    fighter.cooldowns.primary = 0;
+    fighter.cooldowns.secondary = 0;
+  }
 
   // Class ability check
   if (ability.startsWith('pawn_') && fighter.pieceClass !== 'pawn') {
@@ -312,7 +344,11 @@ export function applyAbilityIntent(
               data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
             });
           } else {
-            opponent.hp = Math.max(0, opponent.hp - CLASS_ABILITY_CONFIG.pawn.sweep.damage);
+            opponent.hp = applyFighterDamage(
+              opponent,
+              CLASS_ABILITY_CONFIG.pawn.sweep.damage,
+              duel.sandboxOptions?.godMode
+            );
             duel.events.push({
               type: 'melee_hit',
               timestamp: now,
@@ -578,6 +614,13 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
 
   const fighters = [duel.attacker, duel.defender];
 
+  if (duel.sandboxOptions?.noCooldowns) {
+    duel.attacker.cooldowns.primary = 0;
+    duel.attacker.cooldowns.secondary = 0;
+    duel.defender.cooldowns.primary = 0;
+    duel.defender.cooldowns.secondary = 0;
+  }
+
   // 1. Process tracking loss, parry hold, chill DoT, teleport windup, auto-facing
   for (const fighter of fighters) {
     const opponent = fighter === duel.attacker ? duel.defender : duel.attacker;
@@ -604,9 +647,10 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
     // Chill decay and DoT
     if (fighter.isChilled) {
       fighter.chillRemainingMs -= dtMs;
-      fighter.hp = Math.max(
-        0,
-        fighter.hp - CLASS_ABILITY_CONFIG.bishop.iceBolt.chillDotDps * dtSec
+      fighter.hp = applyFighterDamage(
+        fighter,
+        CLASS_ABILITY_CONFIG.bishop.iceBolt.chillDotDps * dtSec,
+        duel.sandboxOptions?.godMode
       );
       if (fighter.chillRemainingMs <= 0) {
         fighter.isChilled = false;
@@ -630,9 +674,10 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
               data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
             });
           } else {
-            opponent.hp = Math.max(
-              0,
-              opponent.hp - CLASS_ABILITY_CONFIG.knight.cleave.damage
+            opponent.hp = applyFighterDamage(
+              opponent,
+              CLASS_ABILITY_CONFIG.knight.cleave.damage,
+              duel.sandboxOptions?.godMode
             );
             duel.events.push({
               type: 'melee_hit',
@@ -712,9 +757,10 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
       if (dist <= hazard.radius) {
         fighter.isChilled = true;
         fighter.chillRemainingMs = Math.max(fighter.chillRemainingMs, 1000);
-        fighter.hp = Math.max(
-          0,
-          fighter.hp - CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardDotDps * dtSec
+        fighter.hp = applyFighterDamage(
+          fighter,
+          CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardDotDps * dtSec,
+          duel.sandboxOptions?.godMode
         );
       }
     }
@@ -765,7 +811,11 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
       const allyDamage = baseDmg * CLASS_ABILITY_CONFIG.king.summon.baseDamageMultiplier;
 
       if (!enemy.isParrying) {
-        enemy.hp = Math.max(0, enemy.hp - allyDamage);
+        enemy.hp = applyFighterDamage(
+          enemy,
+          allyDamage,
+          duel.sandboxOptions?.godMode
+        );
         duel.events.push({
           type: 'melee_hit',
           timestamp: now,
@@ -870,7 +920,11 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
             const splashDist = Math.hypot(fighter.x - proj.x, fighter.z - proj.z);
             if (splashDist <= proj.splashRadius) {
               if (!fighter.isParrying) {
-                fighter.hp = Math.max(0, fighter.hp - proj.damage);
+                fighter.hp = applyFighterDamage(
+                  fighter,
+                  proj.damage,
+                  duel.sandboxOptions?.godMode
+                );
               }
             }
           }
@@ -932,7 +986,11 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
           data: { defender: target.color, attacker: proj.owner, damage: 0 },
         });
       } else {
-        target.hp = Math.max(0, target.hp - proj.damage);
+        target.hp = applyFighterDamage(
+          target,
+          proj.damage,
+          duel.sandboxOptions?.godMode
+        );
 
         if (proj.type === 'bishop_ice_bolt') {
           target.isChilled = true;
@@ -1027,4 +1085,49 @@ export function getDuelSnapshot(duel: DuelSimulation): DuelSnapshot {
     winner: duel.winner,
     resolutionReason: duel.resolutionReason,
   };
+}
+
+export function resetDuelSimulation(duel: DuelSimulation, now = Date.now()): void {
+  const fen = duel.initialState?.fen ?? '';
+  const pending = duel.initialState?.pending ?? {
+    from: 'e2' as BoardSquare,
+    to: 'e7' as BoardSquare,
+    attackerColor: duel.attacker.color,
+    attackerClass: duel.attacker.pieceClass,
+    defenderClass: duel.defender.pieceClass,
+  };
+  const fresh = createDuel(fen, pending, now);
+  duel.startedAt = now;
+  duel.now = now;
+  duel.attacker = fresh.attacker;
+  duel.defender = fresh.defender;
+  duel.projectiles = [];
+  duel.obstacles = fresh.obstacles;
+  duel.iceHazards = [];
+  duel.allies = [];
+  duel.events = [];
+  duel.lastMoveIntentAt = { w: now, b: now };
+  duel.winner = null;
+  duel.resolutionReason = undefined;
+  duel.isFinished = false;
+  if (duel.sandboxOptions?.noCooldowns) {
+    duel.attacker.cooldowns.primary = 0;
+    duel.attacker.cooldowns.secondary = 0;
+    duel.defender.cooldowns.primary = 0;
+    duel.defender.cooldowns.secondary = 0;
+  }
+}
+
+export function respawnObstacles(duel: DuelSimulation): void {
+  const fen = duel.initialState?.fen ?? '';
+  const pending = duel.initialState?.pending ?? {
+    from: 'e2' as BoardSquare,
+    to: 'e7' as BoardSquare,
+    attackerColor: duel.attacker.color,
+    attackerClass: duel.attacker.pieceClass,
+    defenderClass: duel.defender.pieceClass,
+  };
+  const fresh = createDuel(fen, pending, duel.now);
+  duel.obstacles = fresh.obstacles;
+  duel.iceHazards = [];
 }

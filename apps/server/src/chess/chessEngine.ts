@@ -170,16 +170,34 @@ export function resolveCaptureOutcome(
 
   if (outcome === 'attacker_win') {
     // Attacker executes normal move
-    const chess = new Chess(fen);
     const promoSymbol = pending.promotion ? PROMO_TO_SYMBOL[pending.promotion] : undefined;
-    const applied = chess.move({
-      from: pending.from,
-      to: pending.to,
-      promotion: promoSymbol,
-    });
+    let applied = false;
+    let chess: Chess | null = null;
+    try {
+      chess = new Chess(fen);
+      applied = Boolean(
+        chess.move({
+          from: pending.from,
+          to: pending.to,
+          promotion: promoSymbol,
+        })
+      );
+    } catch {
+      applied = false;
+    }
 
-    if (!applied) {
-      throw new Error(`Failed to commit legal capture: ${pending.from}->${pending.to}`);
+    if (!applied || !chess) {
+      // In sandbox mode or free placement, fallback to moving piece without chess validation
+      const movedFen = freeMovePiece(fen, pending.from, pending.to);
+      return {
+        fen: movedFen,
+        isCheck: false,
+        isCheckmate: false,
+        isStalemate: false,
+        isDraw: false,
+        isGameOver: false,
+        winner: null,
+      };
     }
 
     const isCheck = chess.isCheck();
@@ -217,34 +235,56 @@ export function resolveCaptureOutcome(
   }
 
   // Defender wins: Remove attacker piece from 'from'
-  const chess = new Chess(fen);
-  chess.remove(pending.from);
+  let mutatedFen = fen;
+  try {
+    const chess = new Chess(fen);
+    chess.remove(pending.from);
 
-  // Castling rights update if attacker rook on home square was removed
-  const tokens = chess.fen().split(' ');
-  let castling = tokens[2];
-  if (attackerColor === 'w') {
-    if (pending.from === 'a1') castling = castling.replace('Q', '');
-    if (pending.from === 'h1') castling = castling.replace('K', '');
-  } else {
-    if (pending.from === 'a8') castling = castling.replace('q', '');
-    if (pending.from === 'h8') castling = castling.replace('k', '');
+    // Castling rights update if attacker rook on home square was removed
+    const tokens = chess.fen().split(' ');
+    let castling = tokens[2] || '-';
+    if (attackerColor === 'w') {
+      if (pending.from === 'a1') castling = castling.replace('Q', '');
+      if (pending.from === 'h1') castling = castling.replace('K', '');
+    } else {
+      if (pending.from === 'a8') castling = castling.replace('q', '');
+      if (pending.from === 'h8') castling = castling.replace('k', '');
+    }
+    if (!castling) castling = '-';
+
+    // Clear en passant, reset halfmoves to 0, advance fullmove if black attacked
+    const nextTurn = defenderColor;
+    let fullMove = parseInt(tokens[5] || '1', 10);
+    if (attackerColor === 'b') {
+      fullMove++;
+    }
+
+    mutatedFen = `${tokens[0]} ${nextTurn} ${castling} - 0 ${fullMove}`;
+  } catch {
+    mutatedFen = removePieceFromSquare(fen, pending.from);
   }
-  if (!castling) castling = '-';
-
-  // Clear en passant, reset halfmoves to 0, advance fullmove if black attacked
-  const nextTurn = defenderColor;
-  let fullMove = parseInt(tokens[5], 10);
-  if (attackerColor === 'b') {
-    fullMove++;
-  }
-
-  const mutatedFen = `${tokens[0]} ${nextTurn} ${castling} - 0 ${fullMove}`;
 
   // King Safety Check:
   // Is attacker King now exposed to check from defender?
-  // On mutated board, check if attacker's King square is attacked by defender.
-  const verifyChess = new Chess(mutatedFen);
+  let verifyChess: Chess | null = null;
+  try {
+    verifyChess = new Chess(mutatedFen);
+  } catch {
+    verifyChess = null;
+  }
+
+  if (!verifyChess) {
+    return {
+      fen: mutatedFen,
+      isCheck: false,
+      isCheckmate: false,
+      isStalemate: false,
+      isDraw: false,
+      isGameOver: false,
+      winner: null,
+    };
+  }
+
   let attackerKingSquare: BoardSquare | null = null;
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
   for (let r = 1; r <= 8; r++) {
@@ -273,11 +313,20 @@ export function resolveCaptureOutcome(
     };
   }
 
-  const isCheck = verifyChess.isCheck();
-  const isCheckmate = verifyChess.isCheckmate();
-  const isStalemate = verifyChess.isStalemate();
-  const isDraw = verifyChess.isDraw();
-  const isGameOver = verifyChess.isGameOver();
+  let isCheck = false;
+  let isCheckmate = false;
+  let isStalemate = false;
+  let isDraw = false;
+  let isGameOver = false;
+  try {
+    isCheck = verifyChess.isCheck();
+    isCheckmate = verifyChess.isCheckmate();
+    isStalemate = verifyChess.isStalemate();
+    isDraw = verifyChess.isDraw();
+    isGameOver = verifyChess.isGameOver();
+  } catch {
+    // Ignore invalid chess configurations
+  }
   const winner = isCheckmate ? attackerColor : isDraw ? 'draw' : null;
 
   return {
@@ -290,4 +339,30 @@ export function resolveCaptureOutcome(
     winner,
     reason: isCheckmate ? 'checkmate' : isStalemate ? 'stalemate' : isDraw ? 'draw' : undefined,
   };
+}
+
+export function setPieceOnSquare(
+  fen: string,
+  square: BoardSquare,
+  pieceClass: PieceClass,
+  color: PlayerColor
+): string {
+  const chess = new Chess(fen);
+  chess.put({ type: CLASS_TO_SYMBOL[pieceClass], color }, square);
+  return chess.fen();
+}
+
+export function removePieceFromSquare(fen: string, square: BoardSquare): string {
+  const chess = new Chess(fen);
+  chess.remove(square);
+  return chess.fen();
+}
+
+export function freeMovePiece(fen: string, from: BoardSquare, to: BoardSquare): string {
+  const chess = new Chess(fen);
+  const p = chess.remove(from);
+  if (p) {
+    chess.put(p, to);
+  }
+  return chess.fen();
 }

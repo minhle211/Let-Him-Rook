@@ -55,7 +55,12 @@ export class RoomManager {
     const match = new MatchMachine(id, mode);
     const token = this.generateToken();
     const tokens = new Map<string, PlayerColor>([[token, 'w']]);
-    const bot = mode === 'bot' ? new BotController() : null;
+    const bot = mode === 'bot' || mode === 'sandbox' ? new BotController() : null;
+
+    if (mode === 'sandbox') {
+      match.setCalibrationReady('w', true);
+      match.setCalibrationReady('b', true);
+    }
 
     const room: Room = {
       id,
@@ -76,7 +81,7 @@ export class RoomManager {
     if (!room) {
       throw new Error('Room not found');
     }
-    if (room.match.mode === 'bot') {
+    if (room.match.mode === 'bot' || room.match.mode === 'sandbox') {
       throw new Error('Cannot join solo practice room');
     }
     if (room.tokens.size >= 2) {
@@ -204,6 +209,59 @@ export class RoomManager {
           type: 'pong',
           timestamp: message.timestamp,
         });
+        break;
+      }
+
+      case 'sandbox_set_fen': {
+        match.handleSandboxSetFen(message.fen);
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_place_piece': {
+        match.handleSandboxPlacePiece(message.square, message.pieceClass, message.pieceColor);
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_free_move': {
+        match.handleSandboxFreeMove(message.from, message.to);
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_start_duel': {
+        match.handleSandboxStartDuel(
+          message.attackerClass,
+          message.defenderClass,
+          message.aiBehavior,
+          message.standalone
+        );
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_update_config': {
+        match.handleSandboxUpdateConfig(message.config);
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_reset_duel': {
+        match.handleSandboxResetDuel();
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_exit_duel': {
+        match.handleSandboxExitDuel();
+        this.broadcastSnapshot(room);
+        break;
+      }
+
+      case 'sandbox_respawn_obstacles': {
+        match.handleSandboxRespawnObstacles();
+        this.broadcastSnapshot(room);
         break;
       }
     }

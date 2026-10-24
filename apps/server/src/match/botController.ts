@@ -1,5 +1,6 @@
 import {
   type AbilityType,
+  type AiBehaviorMode,
   type BoardSquare,
   type PieceClass,
   type PromotionPieceClass,
@@ -13,7 +14,7 @@ export class BotController {
   private actionCounter: number = 0;
 
   public tick(match: MatchMachine, now = Date.now()): void {
-    if (match.mode !== 'bot') return;
+    if (match.mode !== 'bot' && match.mode !== 'sandbox') return;
 
     // In calibration, bot is automatically ready
     if (match.phase === 'calibration' || match.phase === 'lobby') {
@@ -23,8 +24,8 @@ export class BotController {
       return;
     }
 
-    // In chess_turn, make move if it is Black's turn
-    if (match.phase === 'chess_turn' && match.turn === 'b') {
+    // In chess_turn, make move if it is Black's turn (bot mode only; user controls both sides in sandbox)
+    if (match.mode === 'bot' && match.phase === 'chess_turn' && match.turn === 'b') {
       if (this.nextActionAt === 0) {
         this.nextActionAt = now + 750;
         return;
@@ -49,12 +50,34 @@ export class BotController {
 
     // In active_duel, fight as Black
     if (match.phase === 'active_duel' && match.duel) {
+      const aiBehavior: AiBehaviorMode =
+        match.mode === 'sandbox'
+          ? (match.sandboxConfig?.aiBehavior ?? 'dummy')
+          : 'aggressive';
+
+      if (aiBehavior === 'dummy') {
+        // Dummy: zero movement and no abilities
+        match.handleDuelMove('b', 0, 0, `bot_mv_${now}`, now);
+        return;
+      }
+
       const fighter = match.duel.defender.color === 'b' ? match.duel.defender : match.duel.attacker;
       const opponent = match.duel.defender.color === 'b' ? match.duel.attacker : match.duel.defender;
 
       const dist = Math.hypot(opponent.x - fighter.x, opponent.z - fighter.z);
       let moveZ = 0;
       let moveX = Math.sin(now / 650) * 0.55;
+
+      if (aiBehavior === 'passive') {
+        // Passive: strafe/move around but never trigger attacks or parry
+        if (dist > 3.0) {
+          moveZ = -0.6;
+        } else if (dist < 1.6) {
+          moveZ = 0.5;
+        }
+        match.handleDuelMove('b', moveX, moveZ, `bot_mv_${now}`, now);
+        return;
+      }
 
       if (fighter.pieceClass === 'pawn') {
         // Melee class: must close into < 1.8u so 2.2u sweep hits reliably

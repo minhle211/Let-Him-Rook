@@ -1,11 +1,14 @@
 import type {
   AbilityType,
+  AiBehaviorMode,
   BoardSquare,
   DuelEvent,
   MatchMode,
   MatchSnapshot,
+  PieceClass,
   PlayerColor,
   PromotionPieceClass,
+  SandboxConfig,
 } from './types.ts';
 
 export type ClientMessage =
@@ -28,7 +31,26 @@ export type ClientMessage =
       actionId: string;
     }
   | { type: 'request_ai_advice' }
-  | { type: 'ping'; timestamp: number };
+  | { type: 'ping'; timestamp: number }
+  | { type: 'sandbox_set_fen'; fen: string }
+  | {
+      type: 'sandbox_place_piece';
+      square: BoardSquare;
+      pieceClass: PieceClass | null;
+      pieceColor?: PlayerColor;
+    }
+  | { type: 'sandbox_free_move'; from: BoardSquare; to: BoardSquare }
+  | {
+      type: 'sandbox_start_duel';
+      attackerClass: PieceClass;
+      defenderClass: PieceClass;
+      aiBehavior?: AiBehaviorMode;
+      standalone?: boolean;
+    }
+  | { type: 'sandbox_update_config'; config: Partial<SandboxConfig> }
+  | { type: 'sandbox_reset_duel' }
+  | { type: 'sandbox_exit_duel' }
+  | { type: 'sandbox_respawn_obstacles' };
 
 export type ServerMessage =
   | {
@@ -78,6 +100,21 @@ const PROMOTIONS = new Set<PromotionPieceClass>([
   'knight',
 ]);
 
+const PIECE_CLASSES = new Set<PieceClass>([
+  'pawn',
+  'rook',
+  'knight',
+  'bishop',
+  'queen',
+  'king',
+]);
+
+const AI_BEHAVIORS = new Set<AiBehaviorMode>([
+  'dummy',
+  'passive',
+  'aggressive',
+]);
+
 export function parseClientMessage(raw: string): ClientMessage {
   if (typeof raw !== 'string') {
     throw new Error('Message must be a string');
@@ -103,7 +140,7 @@ export function parseClientMessage(raw: string): ClientMessage {
   switch (type) {
     case 'create_room': {
       const mode = obj.mode;
-      if (mode !== undefined && mode !== 'pvp' && mode !== 'bot') {
+      if (mode !== undefined && mode !== 'pvp' && mode !== 'bot' && mode !== 'sandbox') {
         throw new Error('Invalid match mode');
       }
       return { type: 'create_room', mode: mode as MatchMode | undefined };
@@ -193,6 +230,125 @@ export function parseClientMessage(raw: string): ClientMessage {
         throw new Error('Invalid timestamp');
       }
       return { type: 'ping', timestamp: obj.timestamp };
+    }
+
+    case 'sandbox_set_fen': {
+      if (typeof obj.fen !== 'string' || obj.fen.length === 0 || obj.fen.length > 256) {
+        throw new Error('Invalid FEN string');
+      }
+      return { type: 'sandbox_set_fen', fen: obj.fen };
+    }
+
+    case 'sandbox_place_piece': {
+      if (typeof obj.square !== 'string' || !SQUARES.has(obj.square)) {
+        throw new Error('Invalid square');
+      }
+      if (
+        obj.pieceClass !== null &&
+        (typeof obj.pieceClass !== 'string' || !PIECE_CLASSES.has(obj.pieceClass as PieceClass))
+      ) {
+        throw new Error('Invalid pieceClass');
+      }
+      if (obj.pieceColor !== undefined && obj.pieceColor !== 'w' && obj.pieceColor !== 'b') {
+        throw new Error('Invalid pieceColor');
+      }
+      return {
+        type: 'sandbox_place_piece',
+        square: obj.square as BoardSquare,
+        pieceClass: obj.pieceClass as PieceClass | null,
+        pieceColor: obj.pieceColor as PlayerColor | undefined,
+      };
+    }
+
+    case 'sandbox_free_move': {
+      if (typeof obj.from !== 'string' || !SQUARES.has(obj.from)) {
+        throw new Error('Invalid from square');
+      }
+      if (typeof obj.to !== 'string' || !SQUARES.has(obj.to)) {
+        throw new Error('Invalid to square');
+      }
+      return {
+        type: 'sandbox_free_move',
+        from: obj.from as BoardSquare,
+        to: obj.to as BoardSquare,
+      };
+    }
+
+    case 'sandbox_start_duel': {
+      if (
+        typeof obj.attackerClass !== 'string' ||
+        !PIECE_CLASSES.has(obj.attackerClass as PieceClass)
+      ) {
+        throw new Error('Invalid attackerClass');
+      }
+      if (
+        typeof obj.defenderClass !== 'string' ||
+        !PIECE_CLASSES.has(obj.defenderClass as PieceClass)
+      ) {
+        throw new Error('Invalid defenderClass');
+      }
+      if (obj.aiBehavior !== undefined && !AI_BEHAVIORS.has(obj.aiBehavior as AiBehaviorMode)) {
+        throw new Error('Invalid aiBehavior');
+      }
+      if (obj.standalone !== undefined && typeof obj.standalone !== 'boolean') {
+        throw new Error('standalone must be boolean');
+      }
+      return {
+        type: 'sandbox_start_duel',
+        attackerClass: obj.attackerClass as PieceClass,
+        defenderClass: obj.defenderClass as PieceClass,
+        aiBehavior: obj.aiBehavior as AiBehaviorMode | undefined,
+        standalone: obj.standalone as boolean | undefined,
+      };
+    }
+
+    case 'sandbox_update_config': {
+      if (!obj.config || typeof obj.config !== 'object' || Array.isArray(obj.config)) {
+        throw new Error('config must be an object');
+      }
+      const c = obj.config as Record<string, unknown>;
+      const config: Partial<SandboxConfig> = {};
+      if (c.rulesEnforced !== undefined) {
+        if (typeof c.rulesEnforced !== 'boolean') throw new Error('rulesEnforced must be boolean');
+        config.rulesEnforced = c.rulesEnforced;
+      }
+      if (c.godMode !== undefined) {
+        if (typeof c.godMode !== 'boolean') throw new Error('godMode must be boolean');
+        config.godMode = c.godMode;
+      }
+      if (c.noCooldowns !== undefined) {
+        if (typeof c.noCooldowns !== 'boolean') throw new Error('noCooldowns must be boolean');
+        config.noCooldowns = c.noCooldowns;
+      }
+      if (c.moveSpeedMultiplier !== undefined) {
+        if (typeof c.moveSpeedMultiplier !== 'number' || isNaN(c.moveSpeedMultiplier)) {
+          throw new Error('moveSpeedMultiplier must be a number');
+        }
+        config.moveSpeedMultiplier = c.moveSpeedMultiplier;
+      }
+      if (c.aiBehavior !== undefined) {
+        if (!AI_BEHAVIORS.has(c.aiBehavior as AiBehaviorMode)) {
+          throw new Error('Invalid aiBehavior');
+        }
+        config.aiBehavior = c.aiBehavior as AiBehaviorMode;
+      }
+      if (c.isStandaloneDuel !== undefined) {
+        if (typeof c.isStandaloneDuel !== 'boolean') throw new Error('isStandaloneDuel must be boolean');
+        config.isStandaloneDuel = c.isStandaloneDuel;
+      }
+      return { type: 'sandbox_update_config', config };
+    }
+
+    case 'sandbox_reset_duel': {
+      return { type: 'sandbox_reset_duel' };
+    }
+
+    case 'sandbox_exit_duel': {
+      return { type: 'sandbox_exit_duel' };
+    }
+
+    case 'sandbox_respawn_obstacles': {
+      return { type: 'sandbox_respawn_obstacles' };
     }
 
     default:

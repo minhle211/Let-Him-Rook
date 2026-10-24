@@ -23,7 +23,29 @@ export type BoardSquare =
   | 'a7' | 'b7' | 'c7' | 'd7' | 'e7' | 'f7' | 'g7' | 'h7'
   | 'a8' | 'b8' | 'c8' | 'd8' | 'e8' | 'f8' | 'g8' | 'h8';
 
-export type MatchMode = 'pvp' | 'bot';
+export type MatchMode = 'pvp' | 'bot' | 'sandbox';
+
+export type AiBehaviorMode = 'dummy' | 'passive' | 'aggressive';
+
+export interface SandboxConfig {
+  rulesEnforced: boolean;
+  godMode: boolean;
+  noCooldowns: boolean;
+  moveSpeedMultiplier: number;
+  aiBehavior: AiBehaviorMode;
+  isStandaloneDuel: boolean;
+}
+
+export function createDefaultSandboxConfig(): SandboxConfig {
+  return {
+    rulesEnforced: true,
+    godMode: false,
+    noCooldowns: false,
+    moveSpeedMultiplier: 1.0,
+    aiBehavior: 'dummy',
+    isStandaloneDuel: false,
+  };
+}
 
 export type MatchWinner = PlayerColor | 'draw' | null;
 export type DuelWinner = PlayerColor | 'draw' | null;
@@ -151,6 +173,7 @@ export interface MatchSnapshot {
   winReason?: string;
   legalMoves: Record<BoardSquare, BoardSquare[]>;
   serverTime: number;
+  sandboxConfig?: SandboxConfig;
 }
 
 export type DuelEventType =

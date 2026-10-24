@@ -20,6 +20,10 @@ interface MatchHUDProps {
   onLeaveRoom?: () => void;
   aiAdviceText?: string | null;
   toast?: { message: string; isError: boolean } | null;
+  onToggleSandbox?: () => void;
+  isSandboxOpen?: boolean;
+  torsoLean?: { leanX: number; leanZ: number; inDeadzone: boolean } | null;
+  usingKeyboard?: boolean;
 }
 
 const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; primaryAbility: AbilityType }> = {
@@ -68,6 +72,10 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   onLeaveRoom,
   aiAdviceText,
   toast,
+  onToggleSandbox,
+  isSandboxOpen,
+  torsoLean,
+  usingKeyboard,
 }) => {
   const [showMiniCam, setShowMiniCam] = useState(true);
   const [copiedRoom, setCopiedRoom] = useState(false);
@@ -286,6 +294,44 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             </span>
             {snapshot.mode === 'bot' ? ' (VS BOT)' : ''}
           </div>
+
+          {snapshot.mode === 'sandbox' && (
+            <div
+              style={{
+                backgroundColor: 'rgba(6, 182, 212, 0.2)',
+                color: '#38bdf8',
+                padding: '0.45rem 0.85rem',
+                borderRadius: 8,
+                border: '1px solid #06b6d4',
+                fontSize: '0.82rem',
+                fontWeight: 800,
+                letterSpacing: '0.05em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+              }}
+            >
+              🛠️ SANDBOX
+            </div>
+          )}
+
+          {snapshot.mode === 'sandbox' && onToggleSandbox && (
+            <button
+              onClick={onToggleSandbox}
+              style={{
+                backgroundColor: isSandboxOpen ? '#0891b2' : '#1e293b',
+                color: '#ffffff',
+                border: '1px solid #06b6d4',
+                padding: '0.45rem 0.75rem',
+                borderRadius: 8,
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              ⚙️ Controls {isSandboxOpen ? '▲' : '▼'}
+            </button>
+          )}
 
           {!isDuel && onOpenCalibration && (
             <button
@@ -793,6 +839,92 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
           </div>
         )}
       </div>
+
+      {/* Real-time Movement & Diagnostics HUD Overlay in Sandbox Duel */}
+      {snapshot.mode === 'sandbox' && isDuel && snapshot.duelSnapshot && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 14,
+            left: 14,
+            zIndex: 35,
+            padding: '0.75rem 1rem',
+            borderRadius: 12,
+            backgroundColor: 'rgba(15, 23, 42, 0.92)',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(6, 182, 212, 0.4)',
+            color: '#e2e8f0',
+            fontFamily: 'monospace',
+            fontSize: '0.75rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.25rem',
+            minWidth: 260,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ fontWeight: 800, color: '#38bdf8', fontSize: '0.8rem', marginBottom: '0.2rem' }}>
+            📊 MOVEMENT & DIAGNOSTICS
+          </div>
+          {(() => {
+            const fighter =
+              snapshot.duelSnapshot.attacker.color === 'w'
+                ? snapshot.duelSnapshot.attacker
+                : snapshot.duelSnapshot.defender;
+            const distToRail = Math.max(
+              0,
+              Math.min(7.0 - Math.abs(fighter.x), 7.0 - Math.abs(fighter.z))
+            );
+            const status = distToRail < 1.0 ? 'DANGER' : distToRail < 2.5 ? 'WARNING' : 'SAFE';
+            const color = distToRail < 1.0 ? '#ef4444' : distToRail < 2.5 ? '#f59e0b' : '#10b981';
+
+            return (
+              <>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Position: </span>
+                  <span style={{ color: '#f8fafc', fontWeight: 700 }}>
+                    X: {fighter.x >= 0 ? `+${fighter.x.toFixed(2)}` : fighter.x.toFixed(2)}, Z:{' '}
+                    {fighter.z >= 0 ? `+${fighter.z.toFixed(2)}` : fighter.z.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Velocity: </span>
+                  <span style={{ color: '#a5f3fc' }}>
+                    Vx: {fighter.vx.toFixed(2)}, Vz: {fighter.vz.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Torso Lean: </span>
+                  <span style={{ color: '#cbd5e1' }}>
+                    X: {(torsoLean?.leanX ?? 0).toFixed(2)}, Z: {(torsoLean?.leanZ ?? 0).toFixed(2)}
+                  </span>{' '}
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      color: (torsoLean?.inDeadzone ?? true) ? '#64748b' : '#06b6d4',
+                    }}
+                  >
+                    [{(torsoLean?.inDeadzone ?? true) ? 'IN DEADZONE' : 'ACTIVE LEAN'}]
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Distance to Rail: </span>
+                  <span style={{ color, fontWeight: 700 }}>
+                    {distToRail.toFixed(1)}u ({status})
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Input Mode: </span>
+                  <span style={{ color: '#fbbf24', fontWeight: 600 }}>
+                    {usingKeyboard ? '⌨️ WASD Keyboard' : '📷 Camera Lean'}
+                  </span>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Picture-in-Picture Live Camera & Skeleton Corner Preview */}
       <div

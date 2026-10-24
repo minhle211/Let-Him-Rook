@@ -118,6 +118,25 @@ export const LobbyScreen: React.FC<LobbyScreenProps> = ({
             Practice vs Bot (Solo)
           </button>
 
+          <button
+            onClick={() => onCreateRoom('sandbox')}
+            disabled={isLoading}
+            style={{
+              padding: '1rem',
+              borderRadius: 10,
+              fontSize: '1rem',
+              fontWeight: 700,
+              backgroundColor: '#06b6d4',
+              color: '#ffffff',
+              border: 'none',
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+              transition: 'background 0.2s',
+              boxShadow: '0 0 15px rgba(6, 182, 212, 0.35)',
+            }}
+          >
+            🛠️ Sandbox Mode
+          </button>
+
           <div
             style={{
               display: 'flex',
