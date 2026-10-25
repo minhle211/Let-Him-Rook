@@ -191,7 +191,7 @@ export class RoomManager {
       }
 
       case 'duel_move_intent': {
-        match.handleDuelMove(color, message.moveX, message.moveZ, message.actionId, match.getSimulationTime());
+        match.handleDuelMove(color, message.moveX, message.moveZ, message.actionId, match.getSimulationTime(), message.turnDir ?? 0);
         break;
       }
 
