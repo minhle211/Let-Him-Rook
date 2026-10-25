@@ -180,6 +180,7 @@ export interface MatchSnapshot {
 }
 
 export type DuelEventType =
+  | 'melee_swing'
   | 'projectile_spawn'
   | 'projectile_hit'
   | 'obstacle_damage'

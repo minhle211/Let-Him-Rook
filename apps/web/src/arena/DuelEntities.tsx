@@ -300,13 +300,15 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
   const isAttackerAttacking = visualEffects.some(
     v =>
       now - v.createdAt < 350 &&
-      ((v.event.type === 'melee_hit' && v.event.data.target === defenderColor) ||
+      ((v.event.type === 'melee_swing' && v.event.data.owner === attackerColor) ||
+        (v.event.type === 'melee_hit' && v.event.data.target === defenderColor) ||
         (v.event.type === 'projectile_spawn' && v.event.data.owner === attackerColor))
   );
   const isDefenderAttacking = visualEffects.some(
     v =>
       now - v.createdAt < 350 &&
-      ((v.event.type === 'melee_hit' && v.event.data.target === attackerColor) ||
+      ((v.event.type === 'melee_swing' && v.event.data.owner === defenderColor) ||
+        (v.event.type === 'melee_hit' && v.event.data.target === attackerColor) ||
         (v.event.type === 'projectile_spawn' && v.event.data.owner === defenderColor))
   );
 
@@ -330,6 +332,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         <PieceCharacter
           pieceClass={duel.attacker.pieceClass}
           color={duel.attacker.color}
+          rookShotCounter={duel.attacker.rookShotCounter}
           hp={duel.attacker.hp}
           maxHp={duel.attacker.maxHp}
           isParrying={duel.attacker.isParrying}
@@ -364,6 +367,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         <PieceCharacter
           pieceClass={duel.defender.pieceClass}
           color={duel.defender.color}
+          rookShotCounter={duel.defender.rookShotCounter}
           hp={duel.defender.hp}
           maxHp={duel.defender.maxHp}
           isParrying={duel.defender.isParrying}

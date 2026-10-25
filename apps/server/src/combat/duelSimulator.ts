@@ -328,6 +328,13 @@ export function applyAbilityIntent(
       }
       fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.pawn.sweep.cooldownMs;
 
+      // Animate every accepted swing, including misses and parried attacks.
+      duel.events.push({
+        type: 'melee_swing',
+        timestamp: now,
+        data: { owner: fighter.color, ability: 'pawn_sweep' },
+      });
+
       // Melee sweep hit calculation
       const dist = Math.hypot(opponent.x - fighter.x, opponent.z - fighter.z);
       if (dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range) {

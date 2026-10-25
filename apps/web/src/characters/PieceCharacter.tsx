@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
+import type { Group } from 'three';
+import { BattleCharacter } from './BattleCharacter.tsx';
 import type { PieceClass, PlayerColor } from '@let-him-rook/shared';
 
 interface PieceCharacterProps {
@@ -9,6 +12,7 @@ interface PieceCharacterProps {
   isTeleporting?: boolean;
   isHit?: boolean;
   isAttacking?: boolean;
+  rookShotCounter?: number;
   hp?: number;
   maxHp?: number;
   scale?: number;
@@ -22,10 +26,33 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
   isTeleporting = false,
   isHit = false,
   isAttacking = false,
+  rookShotCounter = 0,
   hp,
   maxHp = 100,
   scale = 1.0,
 }) => {
+  const swordRef = useRef<Group>(null);
+  const slashRef = useRef<Group & { visible: boolean }>(null);
+  const swingRef = useRef({ active: false, elapsed: 1 });
+  useFrame((_, delta) => {
+    if (pieceClass !== 'pawn') return;
+    const swing = swingRef.current;
+    if (isAttacking && !swing.active) swing.elapsed = 0;
+    swing.active = isAttacking;
+    swing.elapsed += Math.min(delta, 0.05);
+    const t = Math.min(1, swing.elapsed / 0.42);
+    // Wind up, sweep across the front, then return to the resting grip.
+    const sweep = t < 0.2 ? t / 0.2 : t < 0.7 ? 1 - 2 * ((t - 0.2) / 0.5) : -1 + (t - 0.7) / 0.3;
+    if (swordRef.current) {
+      swordRef.current.rotation.set(-0.25 - Math.sin(t * Math.PI) * 1.1, sweep * 1.25, -0.1);
+    }
+    if (slashRef.current) {
+      slashRef.current.visible = t > 0.2 && t < 0.78;
+      slashRef.current.rotation.y = sweep * 0.6;
+      const size = 0.8 + Math.sin(t * Math.PI) * 0.2;
+      slashRef.current.scale.set(size, size, size);
+    }
+  });
   const isWhite = color === 'w';
   const mainColor = isHit ? '#ef4444' : isWhite ? '#f8fafc' : '#1e293b';
   const accentColor = isWhite ? '#d97706' : '#dc2626';
@@ -81,7 +108,7 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
               <meshStandardMaterial color={clothColor} roughness={0.9} />
             </mesh>
             {/* Sword and hand pivot together for the existing attack signal. */}
-            <group position={[0.31, 0.49, -0.08]} rotation={[isAttacking ? -1.25 : -0.25, isAttacking ? -0.65 : 0, -0.1]}>
+            <group ref={swordRef} position={[0.31, 0.49, -0.08]}>
               <mesh castShadow>
                 <boxGeometry args={[0.12, 0.14, 0.14]} />
                 <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.65} />
@@ -97,6 +124,12 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
               <mesh position={[0, 0.58, 0]}>
                 <coneGeometry args={[0.05, 0.1, 4]} />
                 <meshStandardMaterial color="#cbd5e1" roughness={0.45} metalness={0.5} />
+              </mesh>
+            </group>
+            <group ref={slashRef} visible={false} position={[0, 0.65, -0.15]}>
+              <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[0.65, 0.95, 16, 1, Math.PI * 0.12, Math.PI * 0.76]} />
+                <meshBasicMaterial color="#fde68a" transparent opacity={0.8} side={2} depthWrite={false} />
               </mesh>
             </group>
             {/* Cylinder face points forward, with a raised defensive pose. */}
@@ -119,74 +152,17 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
       }
 
       case 'rook':
-        return (
-          <group position={[0, 0.55, 0]}>
-            {/* Heavy Base */}
-            <mesh castShadow>
-              <cylinderGeometry args={[0.38, 0.42, 0.3, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.4} metalness={0.3} />
-            </mesh>
-            {/* Fortified Torso */}
-            <mesh castShadow position={[0, 0.32, 0]}>
-              <cylinderGeometry args={[0.32, 0.36, 0.45, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.4} metalness={0.3} />
-            </mesh>
-            {/* Turret Crown with Crenellations */}
-            <mesh castShadow position={[0, 0.62, 0]}>
-              <cylinderGeometry args={[0.38, 0.32, 0.22, 8]} />
-              <meshStandardMaterial color={accentColor} roughness={0.4} metalness={0.5} />
-            </mesh>
-            {/* Forward Siege Cannon Barrel (-Z is forward) */}
-            <mesh position={[0, 0.38, -0.36]} rotation={[Math.PI / 2, 0, 0]}>
-              <cylinderGeometry args={[0.11, 0.14, 0.45, 12]} />
-              <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.2} />
-            </mesh>
-            {/* Cannon Muzzle Glow */}
-            <mesh position={[0, 0.38, -0.59]}>
-              <sphereGeometry args={[0.09, 10, 10]} />
-              <meshBasicMaterial color="#f97316" />
-            </mesh>
-          </group>
-        );
-
       case 'knight':
-        return (
-          <group position={[0, 0.55, 0]}>
-            {/* Base */}
-            <mesh castShadow>
-              <cylinderGeometry args={[0.35, 0.4, 0.25, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Arched Neck */}
-            <mesh castShadow position={[0, 0.32, 0.05]} rotation={[-0.25, 0, 0]}>
-              <boxGeometry args={[0.26, 0.45, 0.32]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Equine Snout Facing Forward (-Z) */}
-            <mesh castShadow position={[0, 0.5, -0.16]} rotation={[0.2, 0, 0]}>
-              <boxGeometry args={[0.22, 0.22, 0.35]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Ears */}
-            <mesh position={[-0.08, 0.68, 0.05]}>
-              <coneGeometry args={[0.05, 0.15, 4]} />
-              <meshStandardMaterial color={accentColor} />
-            </mesh>
-            <mesh position={[0.08, 0.68, 0.05]}>
-              <coneGeometry args={[0.05, 0.15, 4]} />
-              <meshStandardMaterial color={accentColor} />
-            </mesh>
-            {/* Twin Cleave Blades */}
-            <mesh position={[0.32, 0.32, -0.22]} rotation={[1.2, 0, 0]}>
-              <boxGeometry args={[0.04, 0.5, 0.1]} />
-              <meshStandardMaterial color="#fbbf24" emissive="#d97706" emissiveIntensity={0.4} metalness={0.8} />
-            </mesh>
-            <mesh position={[-0.32, 0.32, -0.22]} rotation={[1.2, 0, 0]}>
-              <boxGeometry args={[0.04, 0.5, 0.1]} />
-              <meshStandardMaterial color="#fbbf24" emissive="#d97706" emissiveIntensity={0.4} metalness={0.8} />
-            </mesh>
-          </group>
-        );
+        return <BattleCharacter
+          mounted={pieceClass === 'knight'}
+          armor={mainColor}
+          trim={isWhite ? '#d4a449' : '#94a3b8'}
+          cloth={isWhite ? '#2563eb' : '#7c3aed'}
+          hit={isHit}
+          attacking={isAttacking}
+          windingUp={isTeleporting}
+          shotCount={rookShotCounter}
+        />;
 
       case 'bishop':
         return (

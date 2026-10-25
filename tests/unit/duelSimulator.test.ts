@@ -391,3 +391,27 @@ test('Duel Simulator: Manual rotation and aim-relative movement integration', ()
   assert.ok(proj.vx > 9.0, 'Rook shot should travel along facingRad direction');
   assert.ok(Math.abs(proj.vz) < 0.1);
 });
+
+
+test('Pawn swings emit visuals on misses and blocks, but not rejected cooldown attempts', () => {
+  const duel = createDuel(DUMMY_FEN, {
+    from: 'e2', to: 'e7', attackerColor: 'w', attackerClass: 'pawn', defenderClass: 'pawn',
+  });
+  const now = duel.startedAt;
+  const initialHp = duel.defender.hp;
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now).accepted, true);
+  assert.equal(duel.defender.hp, initialHp);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 1);
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now + 1).accepted, false);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 1);
+  duel.attacker.x = 0;
+  duel.attacker.z = 0;
+  duel.attacker.facingRad = 0;
+  duel.defender.x = 0;
+  duel.defender.z = -1;
+  duel.defender.isParrying = true;
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now + 2000).accepted, true);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 2);
+  assert.ok(duel.events.some(e => e.type === 'parry_blocked'));
+  assert.equal(duel.defender.hp, initialHp);
+});
