@@ -776,55 +776,109 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         const facingZ = -Math.cos(fighter.facingRad);
         const minSlashDot = Math.cos(((cleaveCfg.slashArcDeg / 2) * Math.PI) / 180);
 
-        const isInCleaveArc = (tx: number, tz: number): boolean => {
+        // Snapshot active obstacles before cleave damage so first-row obstacles block anything behind them
+        const activeObstaclesBeforeCleave = duel.obstacles
+          .filter(o => o.hitsRemaining > 0)
+          .map(o => ({ id: o.id, x: o.x, z: o.z, radius: o.radius }));
+
+        const isInCleaveArc = (tx: number, tz: number): { inArc: boolean; dist: number } => {
           const dx = tx - fighter.x;
           const dz = tz - fighter.z;
           const dist = Math.hypot(dx, dz);
-          if (dist > cleaveCfg.slashArcRadius) return false;
-          if (dist < 0.0001) return true;
+          if (dist > cleaveCfg.slashArcRadius) return { inArc: false, dist };
+          if (dist < 0.0001) return { inArc: true, dist };
           const dot = (dx / dist) * facingX + (dz / dist) * facingZ;
-          return dot >= minSlashDot - 1e-6;
+          return { inArc: dot >= minSlashDot - 1e-6, dist };
         };
 
-        // Execute windup cleave damage on opponent
-        if (isInCleaveArc(opponent.x, opponent.z)) {
-          if (opponent.isParrying) {
-            duel.events.push({
-              type: 'parry_blocked',
-              timestamp: now,
-              data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
-            });
-          } else {
-            opponent.hp = applyFighterDamage(
-              opponent,
-              cleaveCfg.damage,
-              duel.sandboxOptions?.godMode
-            );
-            duel.events.push({
-              type: 'melee_hit',
-              timestamp: now,
-              data: {
-                target: opponent.color,
-                damage: cleaveCfg.damage,
-                remainingHp: opponent.hp,
-              },
-            });
+        const isOccludedByObstacle = (
+          tx: number,
+          tz: number,
+          distT: number,
+          selfObstacleId?: string
+        ): boolean => {
+          if (distT < 0.0001) return false;
+          const ux = (tx - fighter.x) / distT;
+          const uz = (tz - fighter.z) / distT;
+
+          for (const obs of activeObstaclesBeforeCleave) {
+            if (selfObstacleId && obs.id === selfObstacleId) continue;
+            const toOx = obs.x - fighter.x;
+            const toOz = obs.z - fighter.z;
+            const distO = Math.hypot(toOx, toOz);
+            if (distO >= distT - 1e-4) continue;
+
+            const proj = toOx * ux + toOz * uz;
+            if (proj <= 0 || proj >= distT) continue;
+
+            const perpDist = Math.hypot(toOx - ux * proj, toOz - uz * proj);
+            if (perpDist < obs.radius) {
+              return true;
+            }
           }
+          return false;
+        };
+
+        type CleaveCandidate =
+          | { kind: 'opponent'; dist: number }
+          | { kind: 'ally'; dist: number; ally: SummonAllyState }
+          | { kind: 'obstacle'; dist: number; obs: ObstacleState };
+
+        const candidates: CleaveCandidate[] = [];
+
+        const oppCheck = isInCleaveArc(opponent.x, opponent.z);
+        if (oppCheck.inArc && !isOccludedByObstacle(opponent.x, opponent.z, oppCheck.dist)) {
+          candidates.push({ kind: 'opponent', dist: oppCheck.dist });
         }
 
-        // Damage enemy summoned allies in slash range
         for (const ally of duel.allies) {
-          if (ally.owner === fighter.color) continue;
-          if (isInCleaveArc(ally.x, ally.z)) {
-            ally.hp = Math.max(0, ally.hp - cleaveCfg.damage);
+          if (ally.owner === fighter.color || ally.hp <= 0) continue;
+          const allyCheck = isInCleaveArc(ally.x, ally.z);
+          if (allyCheck.inArc && !isOccludedByObstacle(ally.x, ally.z, allyCheck.dist)) {
+            candidates.push({ kind: 'ally', dist: allyCheck.dist, ally });
           }
         }
-        duel.allies = duel.allies.filter((a) => a.hp > 0);
 
-        // Damage active obstacles in slash range (1 hit per cleave)
         for (const obs of duel.obstacles) {
           if (obs.hitsRemaining <= 0) continue;
-          if (isInCleaveArc(obs.x, obs.z)) {
+          const obsCheck = isInCleaveArc(obs.x, obs.z);
+          if (obsCheck.inArc && !isOccludedByObstacle(obs.x, obs.z, obsCheck.dist, obs.id)) {
+            candidates.push({ kind: 'obstacle', dist: obsCheck.dist, obs });
+          }
+        }
+
+        // Prioritize closest entities first and cap at maxTargets (4 identities)
+        candidates.sort((a, b) => a.dist - b.dist);
+        const hitTargets = candidates.slice(0, cleaveCfg.maxTargets);
+
+        for (const target of hitTargets) {
+          if (target.kind === 'opponent') {
+            if (opponent.isParrying) {
+              duel.events.push({
+                type: 'parry_blocked',
+                timestamp: now,
+                data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
+              });
+            } else {
+              opponent.hp = applyFighterDamage(
+                opponent,
+                cleaveCfg.damage,
+                duel.sandboxOptions?.godMode
+              );
+              duel.events.push({
+                type: 'melee_hit',
+                timestamp: now,
+                data: {
+                  target: opponent.color,
+                  damage: cleaveCfg.damage,
+                  remainingHp: opponent.hp,
+                },
+              });
+            }
+          } else if (target.kind === 'ally') {
+            target.ally.hp = Math.max(0, target.ally.hp - cleaveCfg.damage);
+          } else if (target.kind === 'obstacle') {
+            const obs = target.obs;
             obs.hitsRemaining = Math.max(0, obs.hitsRemaining - 1);
             duel.events.push({
               type: 'obstacle_damage',
@@ -840,6 +894,8 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
             }
           }
         }
+
+        duel.allies = duel.allies.filter((a) => a.hp > 0);
       }
     }
   }

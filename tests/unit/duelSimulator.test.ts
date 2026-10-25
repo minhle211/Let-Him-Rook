@@ -342,6 +342,70 @@ test('Duel Simulator: Knight cleave teleport, 120-deg camera cone, 3u forward fa
   const edgeRes = applyAbilityIntent(duelEdge, 'w', 'knight_cleave', undefined, 1000);
   assert.equal(edgeRes.accepted, true);
   assert.ok(duelEdge.attacker.z >= -TABLE_HALF_EXTENT, 'Must clamp within tabletop boundary');
+
+  // 7. Two rows of obstacles + opponent standing behind obstacle: only first row is damaged, second row and shielded opponent take 0 damage
+  const duelTwoRows = createDuel(DUMMY_FEN, pending, 1000);
+  duelTwoRows.attacker.x = 0;
+  duelTwoRows.attacker.z = 3.0;
+  duelTwoRows.attacker.facingRad = 0; // facing -Z
+  // Opponent stands right behind the first row at z = 0.0
+  duelTwoRows.defender.x = 0;
+  duelTwoRows.defender.z = 0.0;
+  duelTwoRows.obstacles = [
+    // First row at z = 1.0
+    { id: 'row1_left', type: 'piece', x: -1.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row1_mid', type: 'piece', x: 0.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row1_right', type: 'piece', x: 1.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    // Second row at z = 0.0 (1 square behind first row)
+    { id: 'row2_left', type: 'piece', x: -1.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row2_mid', type: 'piece', x: 0.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row2_right', type: 'piece', x: 1.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+  ];
+
+  const twoRowRes = applyAbilityIntent(duelTwoRows, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(twoRowRes.accepted, true);
+  stepDuel(duelTwoRows, 1400);
+
+  // First row takes 1 hit each
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_mid')?.hitsRemaining, 2, 'First row center must be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_left')?.hitsRemaining, 2, 'First row left must be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_right')?.hitsRemaining, 2, 'First row right must be damaged');
+
+  // Second row takes 0 hits
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_mid')?.hitsRemaining, 3, 'Second row center must NOT be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_left')?.hitsRemaining, 3, 'Second row left must NOT be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_right')?.hitsRemaining, 3, 'Second row right must NOT be damaged');
+
+  // Opponent standing behind first row obstacle takes 0 damage
+  assert.equal(duelTwoRows.defender.hp, FIGHTER_MAX_HP, 'Opponent behind obstacle must NOT take cleave damage');
+
+  // 8. Max 4 identities cap: when > 4 unoccluded identities are in the cleave arc, at most 4 take damage
+  const duelCap = createDuel(DUMMY_FEN, pending, 1000);
+  duelCap.attacker.x = 0;
+  duelCap.attacker.z = 2.2;
+  duelCap.attacker.facingRad = 0; // facing -Z
+  duelCap.defender.x = 0;
+  duelCap.defender.z = -5.0; // out of cleave arc
+  // Place 6 obstacles fanned across the front arc at distance ~1.2u - 1.6u without occluding each other
+  duelCap.obstacles = [
+    { id: 'c1', type: 'piece', x: 0.0, z: 1.0, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c2', type: 'piece', x: -0.45, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c3', type: 'piece', x: 0.45, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c4', type: 'piece', x: -0.9, z: 0.9, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c5', type: 'piece', x: 0.9, z: 0.9, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c6', type: 'piece', x: -1.15, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+  ];
+
+  // Start windup directly at current position and step
+  duelCap.attacker.teleportWindupRemainingMs = CLASS_ABILITY_CONFIG.knight.cleave.windupMs;
+  stepDuel(duelCap, 1400);
+
+  const damagedCount = duelCap.obstacles.filter(o => o.hitsRemaining < 3).length;
+  assert.equal(
+    damagedCount,
+    CLASS_ABILITY_CONFIG.knight.cleave.maxTargets,
+    `Cleave must damage at most ${CLASS_ABILITY_CONFIG.knight.cleave.maxTargets} identities (got ${damagedCount})`
+  );
 });
 
 test('Duel Simulator: Bishop Ice Bolt freezes obstacle and creates 1.5u ice hazard', () => {
