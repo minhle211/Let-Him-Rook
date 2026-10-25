@@ -50,9 +50,9 @@ test('Duel Simulator: Spawning respects 5.0u separation and 2.5u obstacle cleara
     }
   }
 
-  // Verify 4 tabletop props are present
-  assert.equal(duel.obstacles.filter(o => o.type === 'glass').length, 2);
-  assert.equal(duel.obstacles.filter(o => o.type === 'vase').length, 2);
+  // Arena features: two trees and the castle tower
+  assert.equal(duel.obstacles.filter(o => o.type === 'tree').length, 2);
+  assert.equal(duel.obstacles.filter(o => o.type === 'tower').length, 1);
 });
 
 test('Duel Simulator: Tabletop hard perimeter [-7, 7] clamp on movement', () => {

@@ -1,7 +1,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export const BOARD_SIZE_UNITS = 8; // [-4, 4]
-export const TABLE_HALF_EXTENT = 7; // [-7, 7] (14x14 tabletop)
+export const TABLE_HALF_EXTENT = 8; // [-8, 8] (16x16 battlefield)
 export const SPAWN_SEPARATION = 5.0;
 export const SPAWN_CLEAR_RADIUS = 2.5;
 
@@ -22,13 +22,6 @@ export const RECONNECT_GRACE_MS = 30_000;
 export const DUEL_INTRO_DURATION_MS = 2000;
 export const DUEL_RESULT_DURATION_MS = 2500;
 export const LEAN_DEADZONE = 0.12;
-
-export const FIXED_PROPS = [
-  { id: 'glass_1', type: 'glass' as const, x: -5.5, z: -5.5 },
-  { id: 'glass_2', type: 'glass' as const, x: 5.5, z: 5.5 },
-  { id: 'vase_1', type: 'vase' as const, x: -5.5, z: 5.5 },
-  { id: 'vase_2', type: 'vase' as const, x: 5.5, z: -5.5 },
-];
 
 export const CLASS_ABILITY_CONFIG = {
   pawn: {

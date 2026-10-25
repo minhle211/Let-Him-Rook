@@ -6,7 +6,6 @@ import {
   FIGHTER_MOVE_SPEED,
   FIGHTER_TURN_SPEED,
   FIGHTER_RADIUS,
-  FIXED_PROPS,
   LEAN_DEADZONE,
   OBSTACLE_MAX_HITS,
   OBSTACLE_MAX_HP,
@@ -15,8 +14,18 @@ import {
   SPAWN_CLEAR_RADIUS,
   SPAWN_SEPARATION,
   TABLE_HALF_EXTENT,
+  TOWER,
   TRACKING_LOSS_STOP_MS,
+  TREES,
+  TREE_RADIUS,
   clampToTabletop,
+  distanceToStones,
+  isInsideCastle,
+  puddleSpeedMultiplier,
+  pushCircleOutOfStones,
+  segmentHitStones,
+  castleWallStones,
+  type WallStone,
   indexToSquare,
   isRangedPieceClass,
   squareToTableCoords,
@@ -63,6 +72,60 @@ export interface DuelSimulation {
 
 function generateId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Walls of the castle tower while it stands (empty once it has collapsed). */
+function towerWalls(duel: DuelSimulation): WallStone[] {
+  const tower = activeTower(duel);
+  return tower ? castleWallStones(tower.x, tower.z) : [];
+}
+
+function activeTower(duel: DuelSimulation): ObstacleState | undefined {
+  return duel.obstacles.find(o => o.type === 'tower' && o.hitsRemaining > 0);
+}
+
+/** Round obstacles (pieces, trees). The tower is a set of wall boxes and is handled separately. */
+function isCircleObstacle(obs: ObstacleState): boolean {
+  return obs.type !== 'tower' && obs.hitsRemaining > 0;
+}
+
+/** True when the castle walls stand between two points. */
+function blockedByWalls(walls: WallStone[], x0: number, z0: number, x1: number, z1: number): boolean {
+  return walls.length > 0 && segmentHitStones(x0, z0, x1, z1, 0, walls) !== null;
+}
+
+/** One hit on an obstacle (trees shrug it off). A collapsing tower hurts everyone inside it. */
+function damageObstacle(duel: DuelSimulation, obs: ObstacleState, now: number): void {
+  if (obs.indestructible || obs.hitsRemaining <= 0) return;
+  obs.hitsRemaining = Math.max(0, obs.hitsRemaining - 1);
+  duel.events.push({
+    type: 'obstacle_damage',
+    timestamp: now,
+    data: { obstacleId: obs.id, hitsRemaining: obs.hitsRemaining },
+  });
+  if (obs.hitsRemaining > 0) return;
+  duel.events.push({
+    type: 'obstacle_broken',
+    timestamp: now,
+    data: { obstacleId: obs.id },
+  });
+  if (obs.type !== 'tower') return;
+
+  for (const fighter of [duel.attacker, duel.defender]) {
+    if (!isInsideCastle(fighter.x, fighter.z, obs.x, obs.z)) continue;
+    fighter.hp = applyFighterDamage(fighter, TOWER.collapseDamage, duel.sandboxOptions?.godMode);
+    duel.events.push({
+      type: 'melee_hit',
+      timestamp: now,
+      data: { target: fighter.color, damage: TOWER.collapseDamage, remainingHp: fighter.hp, source: 'tower_collapse' },
+    });
+  }
+  // Allies with 0 HP are removed by the callers' usual cleanup.
+  for (const ally of duel.allies) {
+    if (isInsideCastle(ally.x, ally.z, obs.x, obs.z)) {
+      ally.hp = Math.max(0, ally.hp - TOWER.collapseDamage);
+    }
+  }
 }
 
 export function applyFighterDamage(
@@ -209,18 +272,45 @@ export function createDuel(
     }
   }
 
-  // Add 4 fixed tabletop props
-  for (const prop of FIXED_PROPS) {
+  // Arena features: trees block like props but never break; the castle tower is a walled shelter
+  for (const tree of TREES) {
     obstacles.push({
-      id: prop.id,
-      type: prop.type,
-      x: prop.x,
-      z: prop.z,
-      radius: OBSTACLE_RADIUS,
-      hitsRemaining: OBSTACLE_MAX_HITS,
-      maxHits: OBSTACLE_MAX_HITS,
+      id: tree.id,
+      type: 'tree',
+      x: tree.x,
+      z: tree.z,
+      radius: TREE_RADIUS,
+      hitsRemaining: 1,
+      maxHits: 1,
       frozenRemainingMs: 0,
+      indestructible: true,
     });
+  }
+  obstacles.push({
+    id: TOWER.id,
+    type: 'tower',
+    x: TOWER.x,
+    z: TOWER.z,
+    radius: TOWER.radius,
+    hitsRemaining: TOWER.maxHits,
+    maxHits: TOWER.maxHits,
+    frozenRemainingMs: 0,
+  });
+
+  // Keep spawns clear of the tower walls and trees
+  const walls = castleWallStones(TOWER.x, TOWER.z);
+  for (const fighter of [attacker, defender]) {
+    let pos = pushCircleOutOfStones(fighter.x, fighter.z, FIGHTER_RADIUS, walls);
+    for (const tree of TREES) {
+      const minDist = FIGHTER_RADIUS + TREE_RADIUS;
+      const d = Math.hypot(pos.x - tree.x, pos.z - tree.z);
+      if (d < minDist && d > 0.0001) {
+        pos = { x: tree.x + ((pos.x - tree.x) / d) * minDist, z: tree.z + ((pos.z - tree.z) / d) * minDist };
+      }
+    }
+    pos = clampToTabletop(pos.x, pos.z, FIGHTER_RADIUS);
+    fighter.x = pos.x;
+    fighter.z = pos.z;
   }
 
   return {
@@ -338,17 +428,33 @@ export function applyAbilityIntent(
         data: { owner: fighter.color, ability: 'pawn_sweep' },
       });
 
-      // Melee sweep hit calculation
+      // Melee sweep hit calculation (castle walls block it and take the hit instead)
+      const walls = towerWalls(duel);
+      const sweepFacingX = Math.sin(fighter.facingRad);
+      const sweepFacingZ = -Math.cos(fighter.facingRad);
+      const sweepMinDot = Math.cos(((CLASS_ABILITY_CONFIG.pawn.sweep.arcDeg / 2) * Math.PI) / 180);
+      const tower = activeTower(duel);
+      if (tower) {
+        const wall = distanceToStones(fighter.x, fighter.z, walls);
+        const wallDot =
+          wall.dist > 0.0001
+            ? ((wall.x - fighter.x) * sweepFacingX + (wall.z - fighter.z) * sweepFacingZ) / wall.dist
+            : 1;
+        if (wall.dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range && wallDot >= sweepMinDot) {
+          damageObstacle(duel, tower, now);
+        }
+      }
+
       const dist = Math.hypot(opponent.x - fighter.x, opponent.z - fighter.z);
-      if (dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range) {
+      if (
+        dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range &&
+        !blockedByWalls(walls, fighter.x, fighter.z, opponent.x, opponent.z)
+      ) {
         const toOppX = (opponent.x - fighter.x) / dist;
         const toOppZ = (opponent.z - fighter.z) / dist;
-        const facingX = Math.sin(fighter.facingRad);
-        const facingZ = -Math.cos(fighter.facingRad);
-        const dot = toOppX * facingX + toOppZ * facingZ;
-        const minDot = Math.cos(((CLASS_ABILITY_CONFIG.pawn.sweep.arcDeg / 2) * Math.PI) / 180);
+        const dot = toOppX * sweepFacingX + toOppZ * sweepFacingZ;
 
-        if (dot >= minDot) {
+        if (dot >= sweepMinDot) {
           if (opponent.isParrying) {
             duel.events.push({
               type: 'parry_blocked',
@@ -378,7 +484,10 @@ export function applyAbilityIntent(
       for (const ally of duel.allies) {
         if (ally.owner === fighter.color) continue;
         const dist = Math.hypot(ally.x - fighter.x, ally.z - fighter.z);
-        if (dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range) {
+        if (
+          dist <= CLASS_ABILITY_CONFIG.pawn.sweep.range &&
+          !blockedByWalls(walls, fighter.x, fighter.z, ally.x, ally.z)
+        ) {
           ally.hp = Math.max(0, ally.hp - CLASS_ABILITY_CONFIG.pawn.sweep.damage);
         }
       }
@@ -512,7 +621,7 @@ export function applyAbilityIntent(
         const uz = pathDz / pathLen;
 
         for (const obs of duel.obstacles) {
-          if (obs.hitsRemaining <= 0) continue;
+          if (!isCircleObstacle(obs)) continue;
           const toObsX = obs.x - fighter.x;
           const toObsZ = obs.z - fighter.z;
           const obsDist = Math.hypot(toObsX, toObsZ);
@@ -546,10 +655,22 @@ export function applyAbilityIntent(
         lookTarget = { x: closestBlockingObs.x, z: closestBlockingObs.z };
       }
 
-      // 3. Clamp to tabletop [-7, 7] and resolve any overlap with obstacles or opponent
+      // Castle walls stop the dash where it would first touch them (gates let it through)
+      const walls = towerWalls(duel);
+      const dashLen = Math.hypot(destX - fighter.x, destZ - fighter.z);
+      if (dashLen > 0.0001) {
+        const wallT = segmentHitStones(fighter.x, fighter.z, destX, destZ, FIGHTER_RADIUS, walls);
+        if (wallT !== null) {
+          const stop = Math.max(0, wallT * dashLen - 0.05);
+          destX = fighter.x + ((destX - fighter.x) / dashLen) * stop;
+          destZ = fighter.z + ((destZ - fighter.z) / dashLen) * stop;
+        }
+      }
+
+      // 3. Clamp to the battlefield and resolve any overlap with obstacles or opponent
       let finalPos = clampToTabletop(destX, destZ, FIGHTER_RADIUS);
       for (const obs of duel.obstacles) {
-        if (obs.hitsRemaining <= 0) continue;
+        if (!isCircleObstacle(obs)) continue;
         const minDist = FIGHTER_RADIUS + obs.radius;
         const d = Math.hypot(finalPos.x - obs.x, finalPos.z - obs.z);
         if (d < minDist) {
@@ -563,6 +684,8 @@ export function applyAbilityIntent(
           }
         }
       }
+
+      finalPos = pushCircleOutOfStones(finalPos.x, finalPos.z, FIGHTER_RADIUS, walls);
 
       const minFighterDist = FIGHTER_RADIUS * 2;
       const oppD = Math.hypot(finalPos.x - opponent.x, finalPos.z - opponent.z);
@@ -792,8 +915,10 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
 
         // Snapshot active obstacles before cleave damage so first-row obstacles block anything behind them
         const activeObstaclesBeforeCleave = duel.obstacles
-          .filter(o => o.hitsRemaining > 0)
+          .filter(isCircleObstacle)
           .map(o => ({ id: o.id, x: o.x, z: o.z, radius: o.radius }));
+        const wallsBeforeCleave = towerWalls(duel);
+        const towerBeforeCleave = activeTower(duel);
 
         const isInCleaveArc = (tx: number, tz: number): { inArc: boolean; dist: number } => {
           const dx = tx - fighter.x;
@@ -812,6 +937,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
           selfObstacleId?: string
         ): boolean => {
           if (distT < 0.0001) return false;
+          if (blockedByWalls(wallsBeforeCleave, fighter.x, fighter.z, tx, tz)) return true;
           const ux = (tx - fighter.x) / distT;
           const uz = (tz - fighter.z) / distT;
 
@@ -854,10 +980,19 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         }
 
         for (const obs of duel.obstacles) {
-          if (obs.hitsRemaining <= 0) continue;
+          if (!isCircleObstacle(obs)) continue;
           const obsCheck = isInCleaveArc(obs.x, obs.z);
           if (obsCheck.inArc && !isOccludedByObstacle(obs.x, obs.z, obsCheck.dist, obs.id)) {
             candidates.push({ kind: 'obstacle', dist: obsCheck.dist, obs });
+          }
+        }
+
+        // The castle wall nearest the knight can be slashed like any obstacle
+        if (towerBeforeCleave) {
+          const wall = distanceToStones(fighter.x, fighter.z, wallsBeforeCleave);
+          const wallCheck = isInCleaveArc(wall.x, wall.z);
+          if (wallCheck.inArc) {
+            candidates.push({ kind: 'obstacle', dist: wallCheck.dist, obs: towerBeforeCleave });
           }
         }
 
@@ -892,20 +1027,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
           } else if (target.kind === 'ally') {
             target.ally.hp = Math.max(0, target.ally.hp - cleaveCfg.damage);
           } else if (target.kind === 'obstacle') {
-            const obs = target.obs;
-            obs.hitsRemaining = Math.max(0, obs.hitsRemaining - 1);
-            duel.events.push({
-              type: 'obstacle_damage',
-              timestamp: now,
-              data: { obstacleId: obs.id, hitsRemaining: obs.hitsRemaining },
-            });
-            if (obs.hitsRemaining <= 0) {
-              duel.events.push({
-                type: 'obstacle_broken',
-                timestamp: now,
-                data: { obstacleId: obs.id },
-              });
-            }
+            damageObstacle(duel, target.obs, now);
           }
         }
 
@@ -915,15 +1037,18 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
   }
 
   // 2. Fighter movement & circle-circle obstacle sliding collision
+  const walls = towerWalls(duel);
   for (const fighter of fighters) {
     if (fighter.vx === 0 && fighter.vz === 0) continue;
 
-    let nextX = fighter.x + fighter.vx * dtSec;
-    let nextZ = fighter.z + fighter.vz * dtSec;
+    // Puddles slow movement
+    const slow = puddleSpeedMultiplier(fighter.x, fighter.z);
+    let nextX = fighter.x + fighter.vx * dtSec * slow;
+    let nextZ = fighter.z + fighter.vz * dtSec * slow;
 
     // Obstacle collisions
     for (const obs of duel.obstacles) {
-      if (obs.hitsRemaining <= 0) continue;
+      if (!isCircleObstacle(obs)) continue;
       const minDist = FIGHTER_RADIUS + obs.radius;
       const d = Math.hypot(nextX - obs.x, nextZ - obs.z);
       if (d < minDist && d > 0.0001) {
@@ -934,6 +1059,9 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         nextZ += normZ * overlap;
       }
     }
+
+    // Castle walls
+    ({ x: nextX, z: nextZ } = pushCircleOutOfStones(nextX, nextZ, FIGHTER_RADIUS, walls));
 
     // Opponent fighter collision
     const opponent = fighter === duel.attacker ? duel.defender : duel.attacker;
@@ -1023,7 +1151,8 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
           // Move away from target for 3 seconds
           ally.x -= (dx / dist) * moveDist;
           ally.z -= (dz / dist) * moveDist;
-          const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+          const pushed = pushCircleOutOfStones(ally.x, ally.z, FIGHTER_RADIUS, towerWalls(duel));
+          const clamped = clampToTabletop(pushed.x, pushed.z, FIGHTER_RADIUS);
           ally.x = clamped.x;
           ally.z = clamped.z;
         } else if (dist > cfg.rangedTargetDistance) {
@@ -1031,7 +1160,8 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
           const step = Math.min(moveDist, dist - cfg.rangedTargetDistance);
           ally.x += (dx / dist) * step;
           ally.z += (dz / dist) * step;
-          const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+          const pushed = pushCircleOutOfStones(ally.x, ally.z, FIGHTER_RADIUS, towerWalls(duel));
+          const clamped = clampToTabletop(pushed.x, pushed.z, FIGHTER_RADIUS);
           ally.x = clamped.x;
           ally.z = clamped.z;
         }
@@ -1044,7 +1174,8 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         const moveDist = speed * dtSec;
         ally.x += (dx / dist) * moveDist;
         ally.z += (dz / dist) * moveDist;
-        const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+        const pushed = pushCircleOutOfStones(ally.x, ally.z, FIGHTER_RADIUS, towerWalls(duel));
+        const clamped = clampToTabletop(pushed.x, pushed.z, FIGHTER_RADIUS);
         ally.x = clamped.x;
         ally.z = clamped.z;
       }
@@ -1060,8 +1191,12 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         : ally.pieceClass === 'bishop' ? CLASS_ABILITY_CONFIG.bishop.iceBolt.damage
         : CLASS_ABILITY_CONFIG.queen.volley.damagePerOrb * 3;
       const allyDamage = baseDmg * CLASS_ABILITY_CONFIG.king.summon.baseDamageMultiplier;
+      const allyTower = activeTower(duel);
 
-      if (!enemy.isParrying) {
+      if (allyTower && blockedByWalls(towerWalls(duel), ally.x, ally.z, enemy.x, enemy.z)) {
+        // The castle walls take the blow
+        damageObstacle(duel, allyTower, now);
+      } else if (!enemy.isParrying) {
         enemy.hp = applyFighterDamage(
           enemy,
           allyDamage,
@@ -1111,6 +1246,8 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
       proj.vz = -Math.cos(newAngle) * speed;
     }
 
+    const prevX = proj.x;
+    const prevZ = proj.z;
     proj.x += proj.vx * dtSec;
     proj.z += proj.vz * dtSec;
 
@@ -1127,70 +1264,82 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
 
     let consumed = false;
 
-    // Check collision against active obstacles
-    for (const obs of duel.obstacles) {
-      if (obs.hitsRemaining <= 0) continue;
-      const d = Math.hypot(proj.x - obs.x, proj.z - obs.z);
-      if (d <= proj.radius + obs.radius) {
-        // Obstacle hit
-        obs.hitsRemaining = Math.max(0, obs.hitsRemaining - 1);
-        duel.events.push({
-          type: 'obstacle_damage',
-          timestamp: now,
-          data: { obstacleId: obs.id, hitsRemaining: obs.hitsRemaining },
-        });
-
-        if (obs.hitsRemaining <= 0) {
-          duel.events.push({
-            type: 'obstacle_broken',
-            timestamp: now,
-            data: { obstacleId: obs.id },
-          });
+    // Castle walls (swept, so fast shots can't tunnel) and round obstacles stop the shot and take the hit
+    let hitObs: ObstacleState | null = null;
+    let impactX = proj.x;
+    let impactZ = proj.z;
+    const projTower = activeTower(duel);
+    const projWalls = towerWalls(duel);
+    const wallT = projTower ? segmentHitStones(prevX, prevZ, proj.x, proj.z, proj.radius, projWalls) : null;
+    if (projTower && wallT !== null) {
+      hitObs = projTower;
+      impactX = prevX + (proj.x - prevX) * wallT;
+      impactZ = prevZ + (proj.z - prevZ) * wallT;
+    } else {
+      for (const obs of duel.obstacles) {
+        if (!isCircleObstacle(obs)) continue;
+        if (Math.hypot(proj.x - obs.x, proj.z - obs.z) <= proj.radius + obs.radius) {
+          hitObs = obs;
+          break;
         }
-
-        // Bishop Ice Bolt freeze & hazard
-        if (proj.type === 'bishop_ice_bolt') {
-          obs.frozenRemainingMs = CLASS_ABILITY_CONFIG.bishop.iceBolt.obstacleFreezeMs;
-          duel.iceHazards.push({
-            id: generateId('ice_hazard'),
-            x: obs.x,
-            z: obs.z,
-            radius: CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardRadius,
-            remainingMs: CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardDurationMs,
-          });
-          duel.events.push({
-            type: 'ice_hazard_spawn',
-            timestamp: now,
-            data: { x: obs.x, z: obs.z },
-          });
-        }
-
-        // Rook Cannon Bomb AoE splash
-        if (proj.splashRadius) {
-          for (const fighter of fighters) {
-            const splashDist = Math.hypot(fighter.x - proj.x, fighter.z - proj.z);
-            if (splashDist <= proj.splashRadius) {
-              if (!fighter.isParrying) {
-                fighter.hp = applyFighterDamage(
-                  fighter,
-                  proj.damage,
-                  duel.sandboxOptions?.godMode
-                );
-              }
-            }
-          }
-          for (const ally of duel.allies) {
-            const splashDist = Math.hypot(ally.x - proj.x, ally.z - proj.z);
-            if (splashDist <= proj.splashRadius) {
-              ally.hp = Math.max(0, ally.hp - proj.damage);
-            }
-          }
-          duel.allies = duel.allies.filter((a) => a.hp > 0);
-        }
-
-        consumed = true;
-        break;
       }
+    }
+
+    if (hitObs) {
+      damageObstacle(duel, hitObs, now);
+
+      // Bishop Ice Bolt freeze & hazard
+      if (proj.type === 'bishop_ice_bolt') {
+        const isTower = hitObs.type === 'tower';
+        if (!isTower) {
+          hitObs.frozenRemainingMs = CLASS_ABILITY_CONFIG.bishop.iceBolt.obstacleFreezeMs;
+        }
+        const hazardX = isTower ? impactX : hitObs.x;
+        const hazardZ = isTower ? impactZ : hitObs.z;
+        duel.iceHazards.push({
+          id: generateId('ice_hazard'),
+          x: hazardX,
+          z: hazardZ,
+          radius: CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardRadius,
+          remainingMs: CLASS_ABILITY_CONFIG.bishop.iceBolt.hazardDurationMs,
+        });
+        duel.events.push({
+          type: 'ice_hazard_spawn',
+          timestamp: now,
+          data: { x: hazardX, z: hazardZ },
+        });
+      }
+
+      // Rook Cannon Bomb AoE splash (walls still shelter whoever is behind them)
+      if (proj.splashRadius) {
+        const splashWalls = towerWalls(duel);
+        for (const fighter of fighters) {
+          const splashDist = Math.hypot(fighter.x - impactX, fighter.z - impactZ);
+          if (
+            splashDist <= proj.splashRadius &&
+            !fighter.isParrying &&
+            !blockedByWalls(splashWalls, impactX, impactZ, fighter.x, fighter.z)
+          ) {
+            fighter.hp = applyFighterDamage(
+              fighter,
+              proj.damage,
+              duel.sandboxOptions?.godMode
+            );
+          }
+        }
+        for (const ally of duel.allies) {
+          const splashDist = Math.hypot(ally.x - impactX, ally.z - impactZ);
+          if (
+            splashDist <= proj.splashRadius &&
+            !blockedByWalls(splashWalls, impactX, impactZ, ally.x, ally.z)
+          ) {
+            ally.hp = Math.max(0, ally.hp - proj.damage);
+          }
+        }
+      }
+
+      duel.allies = duel.allies.filter((a) => a.hp > 0);
+      consumed = true;
     }
 
     if (consumed) {

@@ -5,7 +5,7 @@ import type {
   PieceClass,
   PlayerColor,
 } from '@let-him-rook/shared';
-import { CLASS_ABILITY_CONFIG } from '@let-him-rook/shared';
+import { CLASS_ABILITY_CONFIG, TABLE_HALF_EXTENT } from '@let-him-rook/shared';
 import type { VisionFrameData } from '../vision/visionManager.ts';
 import type { CameraTurnIntent } from '../gestures/combatGestures.ts';
 import { buildInviteLink, copyText } from '../networking/invite.ts';
@@ -988,7 +988,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                 : snapshot.duelSnapshot.defender;
             const distToRail = Math.max(
               0,
-              Math.min(7.0 - Math.abs(fighter.x), 7.0 - Math.abs(fighter.z))
+              Math.min(TABLE_HALF_EXTENT - Math.abs(fighter.x), TABLE_HALF_EXTENT - Math.abs(fighter.z))
             );
             const status = distToRail < 1.0 ? 'DANGER' : distToRail < 2.5 ? 'WARNING' : 'SAFE';
             const color = distToRail < 1.0 ? '#ef4444' : distToRail < 2.5 ? '#f59e0b' : '#10b981';

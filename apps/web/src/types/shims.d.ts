@@ -101,6 +101,35 @@ declare module 'three' {
   export const MathUtils: {
     lerp(x: number, y: number, t: number): number;
   };
+  export class BufferAttribute {
+    constructor(array: ArrayLike<number>, itemSize: number);
+  }
+  export class BufferGeometry {
+    setAttribute(name: string, attribute: BufferAttribute): this;
+    setIndex(index: BufferAttribute): this;
+    dispose(): void;
+  }
+  export class Shape {
+    moveTo(x: number, y: number): this;
+    lineTo(x: number, y: number): this;
+    absarc(x: number, y: number, radius: number, startAngle: number, endAngle: number, clockwise?: boolean): this;
+  }
+  export class Object3D {
+    position: Vector3;
+    rotation: Euler;
+    scale: Vector3;
+    matrix: any;
+    updateMatrix(): void;
+  }
+}
+
+declare module 'three/examples/jsm/objects/Reflector.js' {
+  import type { BufferGeometry, Euler, Vector3 } from 'three';
+  export class Reflector {
+    constructor(geometry: BufferGeometry, options?: { textureWidth?: number; textureHeight?: number; color?: number; clipBias?: number });
+    position: Vector3;
+    rotation: Euler;
+  }
 }
 
 declare module '@react-three/fiber' {
