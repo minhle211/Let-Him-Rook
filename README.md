@@ -52,6 +52,8 @@ If the guest can't connect:
 - **Campus network isolation:** some eduroam networks block traffic between devices ("client isolation"). If the link never loads on the guest even with the firewall open, connect both laptops to a phone hotspot and run `npm run host` again.
 - **Port:** use another port with `PORT=4000 npm run host` (Windows PowerShell: `$env:PORT=4000; npm run host`).
 
+**Hand/pose tracking on Apple Silicon Macs (CoreML, Neural Engine).** `npm run host` also starts a native vision helper (`apps/vision-native`) that runs MediaPipe's hand and pose models as CoreML on the Neural Engine and streams landmarks to the browser on `ws://127.0.0.1:3101`, so no MediaPipe runs in the browser (about 7–12 ms per frame vs 40–55 ms in-browser on an M1). The first run creates `apps/vision-native/.venv` and installs its Python packages (needs Python 3.11–3.13, e.g. `brew install python@3.13`). macOS asks to allow camera access for your terminal app the first time; allow it (System Settings → Privacy & Security → Camera) and restart. **The guest Mac runs `npm run vision`** (helper only) and then opens the host's invite link, so each player is tracked by their own Mac. If no helper is running, the browser falls back to in-browser MediaPipe automatically. `ROOK_CAMERA=1 npm run host` picks another camera; `--no-vision` skips the helper.
+
 `npm run host -- --no-build` skips the build when nothing changed. The host laptop must stay awake and running because rooms are stored in its server memory. On a disconnect during a match, the game pauses and the player has 30 seconds to reconnect (re-opening the same tab resumes the session) before a forfeit.
 
 ---

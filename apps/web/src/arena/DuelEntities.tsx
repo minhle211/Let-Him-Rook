@@ -1,9 +1,15 @@
 import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
+  CLASS_ABILITY_CONFIG,
+  FIGHTER_MOVE_SPEED,
+  FIGHTER_RADIUS,
+  LEAN_DEADZONE,
+  clampToTabletop,
   type PlayerColor,
 } from '@let-him-rook/shared';
 import { PieceCharacter } from '../characters/PieceCharacter.tsx';
+import { stepPredictedFacing } from './facingPrediction.ts';
 import {
   matchStore,
   type InterpolationState,
@@ -36,54 +42,163 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
   const projectileRefs = useRef<Map<string, any>>(new Map());
   const allyRefs = useRef<Map<string, any>>(new Map());
   const lookTargetRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0.5, z: 0 });
+  const predictedLocalRef = useRef<{
+    x: number;
+    z: number;
+    facingRad: number;
+    startedAt: number;
+    initialized: boolean;
+  }>({ x: 0, z: 0, facingRad: 0, startedAt: 0, initialized: false });
 
   useFrame((_, delta) => {
-    const liveInterp = matchStore.getState().interpolation || interpolation;
+    const storeState = matchStore.getState();
+    const liveInterp = storeState.interpolation || interpolation;
     const { targetDuel, prevDuel, prevReceivedAt, targetReceivedAt } = liveInterp;
     const now = performance.now();
     const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const dt = Math.min(0.05, Math.max(0.001, delta));
 
     if (targetDuel) {
       const rawInterval = targetReceivedAt - prevReceivedAt;
-      const interval = Math.min(120, Math.max(30, rawInterval || 50));
+      const interval = Math.min(120, Math.max(12, rawInterval || 16.7));
       const elapsedSinceTarget = Math.max(0, now - targetReceivedAt);
       const alpha = Math.min(1.0, elapsedSinceTarget / interval);
       const extrapSec = Math.min(0.06, elapsedSinceTarget / 1000);
 
-      // 1. Attacker smooth interpolation (never overwritten by JSX position prop)
-      if (attackerRef.current) {
-        const fromX = prevDuel?.attacker.x ?? targetDuel.attacker.x;
-        const fromZ = prevDuel?.attacker.z ?? targetDuel.attacker.z;
-        const fromRot = -(prevDuel?.attacker.facingRad ?? targetDuel.attacker.facingRad);
-        const toRot = -targetDuel.attacker.facingRad;
+      const activeLocalColor = localColor || 'w';
+      const isLocalAttacker = targetDuel.attacker.color === activeLocalColor;
+      const localFighter = isLocalAttacker ? targetDuel.attacker : targetDuel.defender;
+      const remoteFighter = isLocalAttacker ? targetDuel.defender : targetDuel.attacker;
+      const prevRemoteFighter = isLocalAttacker ? prevDuel?.defender : prevDuel?.attacker;
+      const remoteInterpX = lerp(prevRemoteFighter?.x ?? remoteFighter.x, remoteFighter.x, alpha);
+      const remoteInterpZ = lerp(prevRemoteFighter?.z ?? remoteFighter.z, remoteFighter.z, alpha);
 
-        const curX = lerp(fromX, targetDuel.attacker.x, alpha);
-        const curZ = lerp(fromZ, targetDuel.attacker.z, alpha);
-        const bobY =
-          Math.hypot(targetDuel.attacker.vx, targetDuel.attacker.vz) > 0.1
-            ? Math.abs(Math.sin(now * 0.014)) * 0.08
-            : 0;
+      // Local client-side prediction + exponential reconciliation
+      const pred = predictedLocalRef.current;
+      const snapDist = Math.hypot(pred.x - localFighter.x, pred.z - localFighter.z);
+      if (!pred.initialized || pred.startedAt !== targetDuel.startedAt || snapDist > 1.8) {
+        pred.x = localFighter.x;
+        pred.z = localFighter.z;
+        pred.facingRad = localFighter.facingRad;
+        pred.startedAt = targetDuel.startedAt;
+        pred.initialized = true;
+      } else if (isDuelActive) {
+        const intent = storeState.localMoveIntent;
+        const intentFresh = now - intent.updatedAt < 300;
+        const moveX = intentFresh ? intent.moveX : 0;
+        const moveZ = intentFresh ? intent.moveZ : 0;
+        const turnDir = intentFresh ? intent.turnDir : 0;
 
-        attackerRef.current.position.set(curX, bobY, curZ);
-        attackerRef.current.rotation.y = lerpAngle(fromRot, toRot, alpha);
+        pred.facingRad = stepPredictedFacing(pred.facingRad, localFighter.facingRad, turnDir, dt);
+
+        const mag = Math.hypot(moveX, moveZ);
+        const isMovingLocal = mag >= LEAN_DEADZONE;
+        if (isMovingLocal) {
+          const fwdX = Math.sin(pred.facingRad);
+          const fwdZ = -Math.cos(pred.facingRad);
+          const rightX = -fwdZ;
+          const rightZ = fwdX;
+
+          let speed =
+            FIGHTER_MOVE_SPEED * (storeState.snapshot?.sandboxConfig?.moveSpeedMultiplier ?? 1.0);
+          const inIceHazard = targetDuel.iceHazards.some(
+            h => h.remainingMs > 0 && Math.hypot(pred.x - h.x, pred.z - h.z) <= h.radius
+          );
+          if (localFighter.isChilled || inIceHazard) {
+            speed *= 1 - CLASS_ABILITY_CONFIG.bishop.iceBolt.chillSlowFactor;
+          }
+
+          const vx = (rightX * moveX - fwdX * moveZ) * speed;
+          const vz = (rightZ * moveX - fwdZ * moveZ) * speed;
+          let nextX = pred.x + vx * dt;
+          let nextZ = pred.z + vz * dt;
+
+          for (const obs of targetDuel.obstacles) {
+            if (obs.hitsRemaining <= 0) continue;
+            const minDist = FIGHTER_RADIUS + obs.radius;
+            const d = Math.hypot(nextX - obs.x, nextZ - obs.z);
+            if (d < minDist && d > 0.0001) {
+              const overlap = minDist - d;
+              nextX += ((nextX - obs.x) / d) * overlap;
+              nextZ += ((nextZ - obs.z) / d) * overlap;
+            }
+          }
+
+          const minFighterDist = FIGHTER_RADIUS * 2;
+          const oppDist = Math.hypot(nextX - remoteInterpX, nextZ - remoteInterpZ);
+          if (oppDist < minFighterDist && oppDist > 0.0001) {
+            const overlap = minFighterDist - oppDist;
+            nextX += ((nextX - remoteInterpX) / oppDist) * overlap;
+            nextZ += ((nextZ - remoteInterpZ) / oppDist) * overlap;
+          }
+
+          const clamped = clampToTabletop(nextX, nextZ, FIGHTER_RADIUS);
+          pred.x = clamped.x;
+          pred.z = clamped.z;
+        }
+
+        const reconcileRate = Math.min(1, dt * (isMovingLocal ? 10 : 16));
+        pred.x = lerp(pred.x, localFighter.x, reconcileRate);
+        pred.z = lerp(pred.z, localFighter.z, reconcileRate);
       }
 
-      // 2. Defender smooth interpolation
+      const localIntentActive =
+        now - storeState.localMoveIntent.updatedAt < 300 &&
+        Math.hypot(storeState.localMoveIntent.moveX, storeState.localMoveIntent.moveZ) >=
+          LEAN_DEADZONE;
+
+      // 1. Attacker position & rotation (predicted if local, interpolated if remote)
+      if (attackerRef.current) {
+        if (isLocalAttacker && isDuelActive) {
+          const moving =
+            localIntentActive ||
+            Math.hypot(targetDuel.attacker.vx, targetDuel.attacker.vz) > 0.1;
+          const bobY = moving ? Math.abs(Math.sin(now * 0.014)) * 0.08 : 0;
+          attackerRef.current.position.set(pred.x, bobY, pred.z);
+          attackerRef.current.rotation.y = -pred.facingRad;
+        } else {
+          const fromX = prevDuel?.attacker.x ?? targetDuel.attacker.x;
+          const fromZ = prevDuel?.attacker.z ?? targetDuel.attacker.z;
+          const fromRot = -(prevDuel?.attacker.facingRad ?? targetDuel.attacker.facingRad);
+          const toRot = -targetDuel.attacker.facingRad;
+
+          const curX = lerp(fromX, targetDuel.attacker.x, alpha);
+          const curZ = lerp(fromZ, targetDuel.attacker.z, alpha);
+          const bobY =
+            Math.hypot(targetDuel.attacker.vx, targetDuel.attacker.vz) > 0.1
+              ? Math.abs(Math.sin(now * 0.014)) * 0.08
+              : 0;
+
+          attackerRef.current.position.set(curX, bobY, curZ);
+          attackerRef.current.rotation.y = lerpAngle(fromRot, toRot, alpha);
+        }
+      }
+
+      // 2. Defender position & rotation (predicted if local, interpolated if remote)
       if (defenderRef.current) {
-        const fromX = prevDuel?.defender.x ?? targetDuel.defender.x;
-        const fromZ = prevDuel?.defender.z ?? targetDuel.defender.z;
-        const fromRot = -(prevDuel?.defender.facingRad ?? targetDuel.defender.facingRad);
-        const toRot = -targetDuel.defender.facingRad;
+        if (!isLocalAttacker && isDuelActive) {
+          const moving =
+            localIntentActive ||
+            Math.hypot(targetDuel.defender.vx, targetDuel.defender.vz) > 0.1;
+          const bobY = moving ? Math.abs(Math.sin(now * 0.014 + 1.5)) * 0.08 : 0;
+          defenderRef.current.position.set(pred.x, bobY, pred.z);
+          defenderRef.current.rotation.y = -pred.facingRad;
+        } else {
+          const fromX = prevDuel?.defender.x ?? targetDuel.defender.x;
+          const fromZ = prevDuel?.defender.z ?? targetDuel.defender.z;
+          const fromRot = -(prevDuel?.defender.facingRad ?? targetDuel.defender.facingRad);
+          const toRot = -targetDuel.defender.facingRad;
 
-        const curX = lerp(fromX, targetDuel.defender.x, alpha);
-        const curZ = lerp(fromZ, targetDuel.defender.z, alpha);
-        const bobY =
-          Math.hypot(targetDuel.defender.vx, targetDuel.defender.vz) > 0.1
-            ? Math.abs(Math.sin(now * 0.014 + 1.5)) * 0.08
-            : 0;
+          const curX = lerp(fromX, targetDuel.defender.x, alpha);
+          const curZ = lerp(fromZ, targetDuel.defender.z, alpha);
+          const bobY =
+            Math.hypot(targetDuel.defender.vx, targetDuel.defender.vz) > 0.1
+              ? Math.abs(Math.sin(now * 0.014 + 1.5)) * 0.08
+              : 0;
 
-        defenderRef.current.position.set(curX, bobY, curZ);
-        defenderRef.current.rotation.y = lerpAngle(fromRot, toRot, alpha);
+          defenderRef.current.position.set(curX, bobY, curZ);
+          defenderRef.current.rotation.y = lerpAngle(fromRot, toRot, alpha);
+        }
       }
 
       // 3. Projectiles smooth 60fps velocity extrapolation
@@ -108,34 +223,20 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         }
       }
 
-      // 5. Over-the-back 3D Duel Aim Camera
+      // 5. Over-the-back 3D Duel Aim Camera (uses predicted local coordinates for 0ms visual response)
       if (isDuelActive && camera) {
-        const localFighter =
-          targetDuel.attacker.color === (localColor || 'w')
-            ? targetDuel.attacker
-            : targetDuel.defender;
-        const prevLocal =
-          prevDuel &&
-          (targetDuel.attacker.color === (localColor || 'w') ? prevDuel.attacker : prevDuel.defender);
-
-        const fromRot = -(prevLocal?.facingRad ?? localFighter.facingRad);
-        const toRot = -localFighter.facingRad;
-        const curRotY = lerpAngle(fromRot, toRot, alpha);
-        const curFacingRad = -curRotY;
-
+        const curFacingRad = pred.facingRad;
         const forwardX = Math.sin(curFacingRad);
         const forwardZ = -Math.cos(curFacingRad);
 
-        const fromX = prevLocal?.x ?? localFighter.x;
-        const fromZ = prevLocal?.z ?? localFighter.z;
-        const curFighterX = lerp(fromX, localFighter.x, alpha);
-        const curFighterZ = lerp(fromZ, localFighter.z, alpha);
+        const curFighterX = pred.x;
+        const curFighterZ = pred.z;
 
         const targetCamX = Math.max(-9.5, Math.min(9.5, curFighterX - forwardX * 5.2));
         const targetCamY = 4.1;
         const targetCamZ = Math.max(-9.5, Math.min(9.5, curFighterZ - forwardZ * 5.2));
 
-        const camSmooth = Math.min(1, delta * 4.5);
+        const camSmooth = Math.min(1, dt * 8.5);
         camera.position.x = lerp(camera.position.x, targetCamX, camSmooth);
         camera.position.y = lerp(camera.position.y, targetCamY, camSmooth);
         camera.position.z = lerp(camera.position.z, targetCamZ, camSmooth);

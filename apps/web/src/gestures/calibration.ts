@@ -5,9 +5,19 @@ export interface PinchThresholds {
   open: number;
 }
 
+export interface BodyBaseline {
+  version: 1;
+  noseX: number;
+  shoulderWidth: number;
+  headSpan?: number;
+  noseRelY?: number;
+  noseEarY?: number;
+  noseRelZ?: number;
+}
+
 export interface CalibrationProfile {
   bodyCalibrated?: boolean;
-  bodyBaseline?: { version: 1; noseX: number; shoulderWidth: number };
+  bodyBaseline?: BodyBaseline;
   movementSensitivity?: { forward: number; backward: number; left: number; right: number; camera?: number };
   cameraBaselineTilt?: number;
   neutralTorsoCenter: { x: number; y: number };
@@ -265,7 +275,15 @@ export class CombinedCalibrationCapture {
       if (['noseX', 'width'].some(key => Math.sqrt(this.body.reduce((sum, sample) => sum + (sample[key as 'noseX' | 'width'] - mean(key as 'noseX' | 'width')) ** 2, 0) / this.body.length) > width * 0.05)) {
         errors.push('Body stance moved too much. Stand still and try again.');
       } else {
-        baseline = { version: 1, noseX: mean('noseX'), shoulderWidth: width };
+        baseline = {
+          version: 1,
+          noseX: mean('noseX'),
+          shoulderWidth: width,
+          headSpan: mean('headSpan'),
+          noseRelY: mean('noseRelY'),
+          noseEarY: mean('noseEarY'),
+          noseRelZ: mean('noseRelZ'),
+        };
         center = { x: mean('x'), y: mean('y') };
       }
     }
@@ -439,11 +457,140 @@ export function computeTorsoMetrics(pose: Landmark3D[] | null): {
 
 export function bodyMetrics(pose: Landmark3D[] | null) {
   const points = [pose?.[0], pose?.[11], pose?.[12]];
-  if (points.some(p => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x <= 0 || p.x >= 1 || p.y <= 0 || p.y >= 1 || !(p.visibility! >= 0.6))) return null;
+  if (
+    points.some(
+      p =>
+        !p ||
+        !Number.isFinite(p.x) ||
+        !Number.isFinite(p.y) ||
+        p.x <= 0 ||
+        p.x >= 1 ||
+        p.y <= 0 ||
+        p.y >= 1 ||
+        !(p.visibility! >= 0.6)
+    )
+  ) {
+    return null;
+  }
   const [nose, left, right] = points as Landmark3D[];
   const width = Math.abs(left.x - right.x);
-  return width >= 0.05 ? { noseX: nose.x, width, x: (left.x + right.x)/2, y: (left.y + right.y)/2 } : null;
+  if (width < 0.05) return null;
+
+  const shoulderX = (left.x + right.x) / 2;
+  const shoulderY = (left.y + right.y) / 2;
+  const shoulderZ =
+    ((Number.isFinite(left.z) ? left.z : 0) + (Number.isFinite(right.z) ? right.z : 0)) / 2;
+
+  const lEar = pose?.[7];
+  const rEar = pose?.[8];
+  const lEye = pose?.[2];
+  const rEye = pose?.[5];
+  const validLm = (p: Landmark3D | undefined) =>
+    Boolean(p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= 0.4);
+
+  const earSpan =
+    validLm(lEar) && validLm(rEar) ? Math.hypot(lEar!.x - rEar!.x, lEar!.y - rEar!.y) : 0;
+  const eyeSpan =
+    validLm(lEye) && validLm(rEye) ? Math.hypot(lEye!.x - rEye!.x, lEye!.y - rEye!.y) : 0;
+
+  let headSpan = 0;
+  if (earSpan > 0.015 && eyeSpan > 0.008) {
+    headSpan = earSpan * 0.65 + eyeSpan * 1.8 * 0.35;
+  } else if (earSpan > 0.015) {
+    headSpan = earSpan;
+  } else if (eyeSpan > 0.008) {
+    headSpan = eyeSpan * 1.8;
+  }
+
+  const noseRelY = nose.y - shoulderY;
+  const earMidY =
+    earSpan > 0.015 && lEar && rEar
+      ? (lEar.y + rEar.y) / 2
+      : eyeSpan > 0.008 && lEye && rEye
+      ? (lEye.y + rEye.y) / 2
+      : nose.y;
+  const noseEarY = nose.y - earMidY;
+  const noseZ = Number.isFinite(nose.z) ? nose.z : 0;
+  const noseRelZ = noseZ - shoulderZ;
+
+  return {
+    noseX: nose.x,
+    width,
+    x: shoulderX,
+    y: shoulderY,
+    headSpan,
+    noseRelY,
+    noseEarY,
+    noseRelZ,
+  };
 }
+
+/**
+ * Fuses Shoulder Depth + Head Depth (ear/eye span scale & nose relative Z) + Head Pitch
+ * (nodding/tilting head forward/back relative to shoulders and ears) into a unified
+ * forward/backward depth ratio (neutral = 1.0, >1.0 = Forward, <1.0 = Backward).
+ */
+export function computeEffectiveDepthRatio(
+  m: NonNullable<ReturnType<typeof bodyMetrics>>,
+  base: BodyBaseline,
+  inferredHeadBase?: { headSpan: number; noseRelY: number; noseEarY: number; noseRelZ: number }
+): number {
+  const sw = Math.max(0.05, base.shoulderWidth);
+  const shoulderDelta = m.width / sw - 1;
+
+  // 1. Head Depth Delta (Ear/Eye span scale + Nose relative Z)
+  const refHeadSpan = base.headSpan ?? inferredHeadBase?.headSpan ?? 0;
+  const spanDelta =
+    m.headSpan > 0.015 && refHeadSpan > 0.015 ? m.headSpan / refHeadSpan - 1 : 0;
+
+  const refNoseRelZ = base.noseRelZ ?? inferredHeadBase?.noseRelZ ?? 0;
+  const zDiff = -(m.noseRelZ - refNoseRelZ);
+  const zDelta = Math.abs(zDiff) > 0.008 ? (zDiff / Math.max(0.18, sw)) * 0.48 : 0;
+
+  let headDepthDelta = 0;
+  if (spanDelta !== 0 && zDelta !== 0 && Math.sign(spanDelta) === Math.sign(zDelta)) {
+    headDepthDelta =
+      Math.abs(spanDelta) >= Math.abs(zDelta)
+        ? spanDelta + zDelta * 0.5
+        : zDelta + spanDelta * 0.5;
+  } else {
+    headDepthDelta = spanDelta + zDelta;
+  }
+
+  // 2. Head Pitch Delta (Nodding forward/down -> positive; tilting head back/up -> negative)
+  // Attenuate pitch when leaning laterally so sideways head tilt never triggers forward/backward.
+  const lateralNormX = (m.noseX - base.noseX) / sw;
+  const lateralAttenuation = Math.max(0, 1 - (Math.abs(lateralNormX) / 0.42) ** 2);
+
+  const hasExplicitRelY = base.noseRelY !== undefined || inferredHeadBase !== undefined;
+  const refNoseRelY = base.noseRelY ?? inferredHeadBase?.noseRelY ?? 0;
+  const relYDiff = hasExplicitRelY ? (m.noseRelY - refNoseRelY) / sw : 0;
+
+  const refNoseEarY = base.noseEarY ?? inferredHeadBase?.noseEarY ?? 0;
+  const earYDiff = m.headSpan > 0.015 ? (m.noseEarY - refNoseEarY) / sw : 0;
+
+  const rawPitchDelta = relYDiff * 0.95 + earYDiff * 1.35;
+  const headPitchDelta = Math.max(-0.35, Math.min(0.35, rawPitchDelta * lateralAttenuation));
+
+  // 3. Fuse Torso Shoulder Depth + Head Depth + Head Pitch
+  const headTotalDelta = headDepthDelta + headPitchDelta;
+  let fusedDelta: number;
+  if (
+    shoulderDelta === 0 ||
+    headTotalDelta === 0 ||
+    Math.sign(shoulderDelta) === Math.sign(headTotalDelta)
+  ) {
+    fusedDelta =
+      Math.abs(shoulderDelta) >= Math.abs(headTotalDelta)
+        ? shoulderDelta + headTotalDelta * 0.65
+        : headTotalDelta + shoulderDelta * 0.65;
+  } else {
+    fusedDelta = shoulderDelta + headTotalDelta * 0.85;
+  }
+
+  return Math.max(0.25, Math.min(2.5, 1 + fusedDelta));
+}
+
 export class BodyCalibrationCapture {
   samples: NonNullable<ReturnType<typeof bodyMetrics>>[] = [];
   private last = -Infinity;
@@ -460,8 +607,9 @@ export class BodyCalibrationCapture {
     const width = mean('width'), noseX = mean('noseX');
     const unstable = ['width','noseX'].some(key => Math.sqrt(this.samples.reduce((a,b)=>a+(b[key as keyof typeof m]-mean(key as keyof typeof m))**2,0)/this.samples.length) > width*0.05);
     const center = {x:mean('x'),y:mean('y')};
+    const headSpan = mean('headSpan'), noseRelY = mean('noseRelY'), noseEarY = mean('noseEarY'), noseRelZ = mean('noseRelZ');
     this.samples = [];
-    return unstable ? { error: true as const } : { error: false as const, baseline: {version: 1 as const,noseX,shoulderWidth:width}, center };
+    return unstable ? { error: true as const } : { error: false as const, baseline: {version: 1 as const,noseX,shoulderWidth:width,headSpan,noseRelY,noseEarY,noseRelZ}, center };
   }
 }
 

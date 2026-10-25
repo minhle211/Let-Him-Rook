@@ -9,3 +9,7 @@ apps/web/dist/
 *.key
 *.crt
 certs/
+
+# Native vision helper (created by npm run host / npm run vision)
+apps/vision-native/.venv/
+__pycache__/

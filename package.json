@@ -11,6 +11,7 @@
     "dev": "node --eval \"import { spawn } from 'node:child_process'; const s = spawn('node', ['apps/server/src/index.ts'], { stdio: 'inherit' }); const w = spawn('./node_modules/.bin/vite', ['apps/web'], { stdio: 'inherit' }); process.on('SIGINT', () => { s.kill(); w.kill(); process.exit(); });\"",
     "start": "vite build apps/web && node apps/server/src/index.ts",
     "host": "node apps/server/src/host.ts",
+    "vision": "node apps/server/src/vision.ts",
     "dev:server": "node --watch apps/server/src/index.ts",
     "dev:3d": "node apps/server/src/index.ts",
     "dev:web": "vite apps/web",

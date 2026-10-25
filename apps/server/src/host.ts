@@ -13,12 +13,14 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RookServer, getLanAddresses } from './ws/wsServer.ts';
 import { loadOrCreateCert } from './net/selfSignedCert.ts';
+import { startVisionHelper } from './visionHelper.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 process.chdir(repoRoot); // the server resolves apps/web/dist relative to cwd
 
 const port = Number(process.env.PORT || 3001);
 const skipBuild = process.argv.includes('--no-build');
+const skipVision = process.argv.includes('--no-vision');
 
 if (!skipBuild) {
   console.log('Building web client...');
@@ -54,10 +56,15 @@ Let Him Rook is hosting on port ${port}${tls.created ? ' (new HTTPS certificate 
    (Chrome/Edge) or Show Details -> visit this website (Safari). This is expected.
 3. If the other laptop can't connect, allow Node.js through the firewall
    (Windows: tick "Public networks" too, eduroam is usually Public).
+4. The other Mac runs \`npm run vision\` for its own camera tracking (CoreML on its Neural Engine).
 
 Press Ctrl+C to stop.`);
 
+// Native CoreML hand/pose tracking for the browser on this Mac (the guest Mac runs `npm run vision`).
+const visionHelper = skipVision ? null : startVisionHelper(repoRoot);
+
 const shutdown = () => {
+  visionHelper?.kill('SIGTERM');
   server.stop().finally(() => process.exit(0));
 };
 process.on('SIGINT', shutdown);

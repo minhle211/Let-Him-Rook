@@ -5,11 +5,15 @@ export interface Landmark3D {
   visibility?: number;
 }
 
-export type VisionDelegate = 'GPU' | 'CPU';
+/** GPU/CPU: in-browser MediaPipe worker. ANE: native CoreML helper on the Apple Neural Engine. */
+export type VisionDelegate = 'GPU' | 'CPU' | 'ANE';
+export type VisionMode = 'chess' | 'duel_pose_only' | 'duel_full';
 
 export interface VisionDiagnostics {
   fps: number;
   inferenceMs: number;
+  gestureLatencyMs?: number;
+  visionMode?: VisionMode;
   isLowLight: boolean;
   isCroppedBody: boolean;
   isCroppedHands: boolean;
@@ -18,7 +22,7 @@ export interface VisionDiagnostics {
   workerError?: string;
   hasHandModel?: boolean;
   hasPoseModel?: boolean;
-  /** Backend running inference: GPU, or CPU only if the browser has no usable WebGL2. */
+  /** Backend running inference: ANE (native helper), else in-browser GPU, or CPU without WebGL2. */
   delegate?: VisionDelegate;
 }
 
@@ -31,7 +35,8 @@ export interface VisionFrameData {
 
 export type VisionWorkerRequest =
   | { type: 'init'; delegate: VisionDelegate }
-  | { type: 'frame'; frame: ImageBitmap; timestamp: number }
+  | { type: 'set_mode'; mode: VisionMode }
+  | { type: 'frame'; frame: ImageBitmap; timestamp: number; mode?: VisionMode }
   | { type: 'close' };
 
 export type VisionWorkerResponse =
