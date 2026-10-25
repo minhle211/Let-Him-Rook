@@ -4,6 +4,7 @@ import type { Group } from 'three';
 
 interface Props {
   mounted: boolean;
+  clone?: boolean;
   armor: string;
   trim: string;
   cloth: string;
@@ -18,7 +19,7 @@ function Block({ at, size, color }: { key?: string | number; at: [number, number
   return <mesh castShadow position={at}><boxGeometry args={size} /><meshStandardMaterial color={color} roughness={0.7} /></mesh>;
 }
 
-export function BattleCharacter({ mounted, armor, trim, cloth, hit, attacking, windingUp, shotCount }: Props) {
+export function BattleCharacter({ mounted, clone = false, armor, trim, cloth, hit, attacking, windingUp, shotCount }: Props) {
   const body = useRef<Group>(null);
   const weapon = useRef<Group>(null);
   const legs = useRef<Group>(null);
@@ -69,15 +70,15 @@ export function BattleCharacter({ mounted, armor, trim, cloth, hit, attacking, w
     <group ref={body}>
       {mounted ? <>
         {/* Horse, saddle, four legs, mane and forward-facing muzzle. */}
-        <Block at={[0, 0.53, 0.02]} size={[0.34, 0.32, 0.65]} color="#705044" />
+        <Block at={[0, 0.53, 0.02]} size={[0.34, 0.32, 0.65]} color={clone ? '#60a5fa' : '#705044'} />
         <group ref={legs}>
-          {[-0.12, 0.12].flatMap(x => [-0.21, 0.23].map(z => <Block key={x + ':' + z} at={[x, 0.29, z]} size={[0.09, 0.3, 0.1]} color="#49352e" />))}
+          {[-0.12, 0.12].flatMap(x => [-0.21, 0.23].map(z => <Block key={x + ':' + z} at={[x, 0.29, z]} size={[0.09, 0.3, 0.1]} color={clone ? '#2563eb' : '#49352e'} />))}
         </group>
-        <Block at={[0, 0.75, -0.23]} size={[0.19, 0.42, 0.2]} color="#705044" />
-        <Block at={[0, 0.91, -0.36]} size={[0.2, 0.19, 0.3]} color="#705044" />
-        <Block at={[0, 0.81, -0.12]} size={[0.07, 0.43, 0.08]} color="#292524" />
-        {[-0.065, 0.065].map(x => <Block key={x} at={[x, 1.04, -0.28]} size={[0.055, 0.12, 0.06]} color="#49352e" />)}
-        <Block at={[0, 0.56, 0.39]} size={[0.07, 0.3, 0.09]} color="#292524" />
+        <Block at={[0, 0.75, -0.23]} size={[0.19, 0.42, 0.2]} color={clone ? '#60a5fa' : '#705044'} />
+        <Block at={[0, 0.91, -0.36]} size={[0.2, 0.19, 0.3]} color={clone ? '#60a5fa' : '#705044'} />
+        <Block at={[0, 0.81, -0.12]} size={[0.07, 0.43, 0.08]} color={clone ? '#1d4ed8' : '#292524'} />
+        {[-0.065, 0.065].map(x => <Block key={x} at={[x, 1.04, -0.28]} size={[0.055, 0.12, 0.06]} color={clone ? '#2563eb' : '#49352e'} />)}
+        <Block at={[0, 0.56, 0.39]} size={[0.07, 0.3, 0.09]} color={clone ? '#1d4ed8' : '#292524'} />
         <Block at={[0, 0.72, 0.04]} size={[0.38, 0.08, 0.29]} color={cloth} />
         {[-0.22, 0.22].map(x => <Block key={x} at={[x, 0.64, 0.06]} size={[0.12, 0.3, 0.17]} color={metal} />)}
       </> : <>

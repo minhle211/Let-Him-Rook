@@ -302,14 +302,16 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
       now - v.createdAt < 350 &&
       ((v.event.type === 'melee_swing' && v.event.data.owner === attackerColor) ||
         (v.event.type === 'melee_hit' && v.event.data.target === defenderColor) ||
-        (v.event.type === 'projectile_spawn' && v.event.data.owner === attackerColor))
+        (v.event.type === 'projectile_spawn' && v.event.data.owner === attackerColor) ||
+        (v.event.type === 'summon_ally' && v.event.data.owner === attackerColor))
   );
   const isDefenderAttacking = visualEffects.some(
     v =>
       now - v.createdAt < 350 &&
       ((v.event.type === 'melee_swing' && v.event.data.owner === defenderColor) ||
         (v.event.type === 'melee_hit' && v.event.data.target === attackerColor) ||
-        (v.event.type === 'projectile_spawn' && v.event.data.owner === defenderColor))
+        (v.event.type === 'projectile_spawn' && v.event.data.owner === defenderColor) ||
+        (v.event.type === 'summon_ally' && v.event.data.owner === defenderColor))
   );
 
   return (
@@ -391,7 +393,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         if (proj.type === 'bishop_ice_bolt') {
           color = '#38bdf8'; // Frost cyan
         } else if (proj.type === 'queen_orb') {
-          color = '#a855f7'; // Purple
+          color = '#f97316'; // Fire
         } else if (proj.type === 'rook_cannon_bomb') {
           color = '#ef4444'; // Red AoE bomb
           radius = 0.36;
@@ -443,7 +445,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         </group>
       ))}
 
-      {/* King's Summoned Allies */}
+      {/* King's blue clones keep their owner's team ring. */}
       {duel.allies.map(ally => (
         <group
           key={ally.id}
@@ -459,9 +461,14 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
             }
           }}
         >
+          <mesh position={[0, 0.025, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.3, 0.38, 16]} />
+            <meshBasicMaterial color={ally.owner === 'w' ? '#fbbf24' : '#c084fc'} />
+          </mesh>
           <PieceCharacter
             pieceClass={ally.pieceClass}
             color={ally.owner}
+            isClone
             scale={0.72}
             hp={ally.hp}
             maxHp={1}

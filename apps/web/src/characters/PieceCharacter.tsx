@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { Group } from 'three';
+import { MageCharacter } from './MageCharacter.tsx';
 import { BattleCharacter } from './BattleCharacter.tsx';
 import type { PieceClass, PlayerColor } from '@let-him-rook/shared';
 
@@ -13,6 +14,7 @@ interface PieceCharacterProps {
   isHit?: boolean;
   isAttacking?: boolean;
   rookShotCounter?: number;
+  isClone?: boolean;
   hp?: number;
   maxHp?: number;
   scale?: number;
@@ -27,6 +29,7 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
   isHit = false,
   isAttacking = false,
   rookShotCounter = 0,
+  isClone = false,
   hp,
   maxHp = 100,
   scale = 1.0,
@@ -54,16 +57,15 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
     }
   });
   const isWhite = color === 'w';
-  const mainColor = isHit ? '#ef4444' : isWhite ? '#f8fafc' : '#1e293b';
-  const accentColor = isWhite ? '#d97706' : '#dc2626';
+  const mainColor = isHit ? '#ef4444' : isClone ? '#60a5fa' : isWhite ? '#f8fafc' : '#1e293b';
+  const clothColor = isClone ? '#2563eb' : isWhite ? '#2563eb' : '#7c3aed';
+  const trimColor = isClone ? '#bae6fd' : isWhite ? '#d4a449' : '#94a3b8';
   const emissiveHit = isHit ? '#dc2626' : '#000000';
   const frostColor = '#38bdf8';
 
   const renderClassMesh = () => {
     switch (pieceClass) {
       case 'pawn': {
-        const clothColor = isWhite ? '#2563eb' : '#7c3aed';
-        const trimColor = isWhite ? '#d4a449' : '#94a3b8';
         return (
           <group>
             {/* Low-poly guard, facing -Z. Keep the silhouette inside one square. */}
@@ -156,8 +158,9 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
         return <BattleCharacter
           mounted={pieceClass === 'knight'}
           armor={mainColor}
-          trim={isWhite ? '#d4a449' : '#94a3b8'}
-          cloth={isWhite ? '#2563eb' : '#7c3aed'}
+          trim={trimColor}
+          cloth={clothColor}
+          clone={isClone}
           hit={isHit}
           attacking={isAttacking}
           windingUp={isTeleporting}
@@ -165,123 +168,10 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
         />;
 
       case 'bishop':
-        return (
-          <group position={[0, 0.6, 0]}>
-            {/* Slender Base */}
-            <mesh castShadow>
-              <cylinderGeometry args={[0.34, 0.4, 0.25, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Tall Body */}
-            <mesh castShadow position={[0, 0.35, 0]}>
-              <cylinderGeometry args={[0.22, 0.32, 0.55, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Mitre Cap */}
-            <mesh castShadow position={[0, 0.72, 0]}>
-              <coneGeometry args={[0.24, 0.42, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.2} />
-            </mesh>
-            {/* Top Cross Finial */}
-            <mesh position={[0, 0.96, 0]}>
-              <sphereGeometry args={[0.07, 8, 8]} />
-              <meshStandardMaterial color={accentColor} metalness={0.6} />
-            </mesh>
-            {/* Frost Staff on Right Side (-Z forward) */}
-            <group position={[0.32, 0.4, -0.18]} rotation={[0.25, 0, 0]}>
-              <mesh>
-                <cylinderGeometry args={[0.03, 0.03, 0.85, 8]} />
-                <meshStandardMaterial color="#cbd5e1" metalness={0.6} />
-              </mesh>
-              <mesh position={[0, 0.46, 0]}>
-                <octahedronGeometry args={[0.11, 0]} />
-                <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.9} />
-              </mesh>
-            </group>
-          </group>
-        );
-
       case 'queen':
-        return (
-          <group position={[0, 0.65, 0]}>
-            {/* Flared Base */}
-            <mesh castShadow>
-              <cylinderGeometry args={[0.36, 0.42, 0.25, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.2} metalness={0.3} />
-            </mesh>
-            {/* Tapered Elegant Waist */}
-            <mesh castShadow position={[0, 0.38, 0]}>
-              <cylinderGeometry args={[0.2, 0.34, 0.6, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.2} metalness={0.3} />
-            </mesh>
-            {/* Coronet Crown */}
-            <mesh castShadow position={[0, 0.76, 0]}>
-              <cylinderGeometry args={[0.32, 0.22, 0.28, 12]} />
-              <meshStandardMaterial color={accentColor} roughness={0.3} metalness={0.6} />
-            </mesh>
-            {/* Crown Jewel */}
-            <mesh position={[0, 0.94, 0]}>
-              <sphereGeometry args={[0.09, 12, 12]} />
-              <meshStandardMaterial color="#ec4899" emissive="#be185d" />
-            </mesh>
-            {/* 3 Floating Arcane Seeking Orbs */}
-            <mesh position={[-0.36, 0.55, -0.2]}>
-              <sphereGeometry args={[0.08, 10, 10]} />
-              <meshStandardMaterial color="#a855f7" emissive="#9333ea" emissiveIntensity={0.9} />
-            </mesh>
-            <mesh position={[0, 0.68, -0.3]}>
-              <sphereGeometry args={[0.08, 10, 10]} />
-              <meshStandardMaterial color="#a855f7" emissive="#9333ea" emissiveIntensity={0.9} />
-            </mesh>
-            <mesh position={[0.36, 0.55, -0.2]}>
-              <sphereGeometry args={[0.08, 10, 10]} />
-              <meshStandardMaterial color="#a855f7" emissive="#9333ea" emissiveIntensity={0.9} />
-            </mesh>
-          </group>
-        );
-
       case 'king':
-        return (
-          <group position={[0, 0.7, 0]}>
-            {/* Grand Pedestal */}
-            <mesh castShadow>
-              <cylinderGeometry args={[0.38, 0.44, 0.25, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.3} />
-            </mesh>
-            {/* Regal Robe Torso */}
-            <mesh castShadow position={[0, 0.42, 0]}>
-              <cylinderGeometry args={[0.28, 0.36, 0.68, 16]} />
-              <meshStandardMaterial color={mainColor} emissive={emissiveHit} roughness={0.3} metalness={0.3} />
-            </mesh>
-            {/* Arched Crown */}
-            <mesh castShadow position={[0, 0.85, 0]}>
-              <sphereGeometry args={[0.26, 16, 12]} />
-              <meshStandardMaterial color={accentColor} roughness={0.3} metalness={0.6} />
-            </mesh>
-            {/* Maltese Cross */}
-            <group position={[0, 1.15, 0]}>
-              <mesh>
-                <boxGeometry args={[0.08, 0.24, 0.08]} />
-                <meshStandardMaterial color={accentColor} metalness={0.7} />
-              </mesh>
-              <mesh>
-                <boxGeometry args={[0.2, 0.08, 0.08]} />
-                <meshStandardMaterial color={accentColor} metalness={0.7} />
-              </mesh>
-            </group>
-            {/* Royal Summoner Scepter */}
-            <group position={[0.36, 0.45, -0.18]} rotation={[0.2, 0, 0]}>
-              <mesh>
-                <cylinderGeometry args={[0.03, 0.03, 0.9, 8]} />
-                <meshStandardMaterial color="#fbbf24" metalness={0.8} />
-              </mesh>
-              <mesh position={[0, 0.48, 0]}>
-                <sphereGeometry args={[0.1, 10, 10]} />
-                <meshStandardMaterial color="#fde047" emissive="#eab308" emissiveIntensity={0.8} />
-              </mesh>
-            </group>
-          </group>
-        );
+        return <MageCharacter kind={pieceClass} armor={mainColor} cloth={clothColor} trim={trimColor} attacking={isAttacking} clone={isClone} />;
+
     }
   };
 
