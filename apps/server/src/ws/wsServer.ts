@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
+import { networkInterfaces } from 'node:os';
+import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -176,22 +179,78 @@ export function createVirtualSessionPair(): {
   return { clientSession, serverSession };
 }
 
+/** Private, non-internal IPv4 addresses other laptops on the LAN can reach this host at. */
+export function getLanAddresses(): string[] {
+  const addresses: string[] = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const info of list ?? []) {
+      if (info.family === 'IPv4' && !info.internal && !info.address.startsWith('169.254.')) {
+        addresses.push(info.address);
+      }
+    }
+  }
+  return addresses;
+}
+
+export interface RookServerOptions {
+  /** Serve over HTTPS/WSS (needed for guest webcams on the LAN). */
+  tls?: { cert: string; key: string };
+}
+
 export class RookServer {
-  public server: Server;
+  public server: Server | HttpsServer;
   public roomManager: RoomManager;
   private tickInterval: NodeJS.Timeout | null = null;
+  private readonly secure: boolean;
+  private listenPort = 0;
+  /** The socket actually bound to the port (a protocol sniffer in front of HTTPS when TLS is on). */
+  private readonly listener: NetServer;
+  private readonly rawSockets = new Set<Socket>();
 
-  constructor() {
+  constructor(options: RookServerOptions = {}) {
     this.roomManager = new RoomManager();
-    this.server = createServer((req, res) => this.handleHttp(req, res));
+    this.secure = Boolean(options.tls);
+    const handler = (req: IncomingMessage, res: ServerResponse) => this.handleHttp(req, res);
+    this.server = options.tls
+      ? createHttpsServer({ cert: options.tls.cert, key: options.tls.key }, handler)
+      : createServer(handler);
     this.server.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head));
+    this.listener = options.tls ? this.createHttpsRedirectingListener() : this.server;
+  }
+
+  /**
+   * Accept both https:// and plain http:// on the same port: TLS connections
+   * (first byte 0x16 = handshake) go to the HTTPS server, anything else gets a
+   * redirect to https:// instead of the browser's "ERR_EMPTY_RESPONSE".
+   */
+  private createHttpsRedirectingListener(): NetServer {
+    const redirect = createServer((req, res) => {
+      const host = req.headers.host || `localhost:${this.listenPort}`;
+      res.writeHead(301, { Location: `https://${host}${req.url || '/'}` });
+      res.end();
+    });
+    redirect.on('upgrade', (_req, socket) => socket.destroy());
+    return createNetServer(socket => {
+      this.rawSockets.add(socket);
+      socket.on('close', () => this.rawSockets.delete(socket));
+      socket.once('data', firstChunk => {
+        socket.pause();
+        socket.unshift(firstChunk);
+        (firstChunk[0] === 0x16 ? this.server : redirect).emit('connection', socket);
+        process.nextTick(() => socket.resume());
+      });
+      socket.on('error', () => socket.destroy());
+    });
   }
 
   public start(port = 3001, host = '0.0.0.0'): Promise<number> {
-    return new Promise(resolve => {
-      this.server.listen(port, host, () => {
-        const addr = this.server.address();
+    return new Promise((resolve, reject) => {
+      this.listener.once('error', reject); // e.g. EADDRINUSE, instead of hanging forever
+      this.listener.listen(port, host, () => {
+        this.listener.off('error', reject);
+        const addr = this.listener.address();
         const actualPort = typeof addr === 'object' && addr ? addr.port : port;
+        this.listenPort = actualPort;
         this.tickInterval = setInterval(() => {
           this.roomManager.tick();
         }, 50);
@@ -207,7 +266,9 @@ export class RookServer {
       this.tickInterval = null;
     }
     return new Promise(resolve => {
-      this.server.close(() => resolve());
+      this.listener.close(() => resolve());
+      // Keep-alive sockets would otherwise hold close() open until they time out.
+      for (const socket of this.rawSockets) socket.destroy();
     });
   }
 
@@ -232,6 +293,13 @@ export class RookServer {
       } else {
         res.end(JSON.stringify({ ok: true, timestamp: Date.now() }));
       }
+      return;
+    }
+
+    // Lets the host's browser build an invite link with a LAN address even when it opened localhost.
+    if (req.method === 'GET' && url.pathname === '/lan-info') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ protocol: this.secure ? 'https' : 'http', port: this.listenPort, addresses: getLanAddresses() }));
       return;
     }
 
@@ -290,6 +358,8 @@ export class RookServer {
   }
 
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    // Send each small game message immediately (disable Nagle's algorithm batching).
+    (socket as Socket).setNoDelay?.(true);
     const key = req.headers['sec-websocket-key'];
     if (!key || typeof key !== 'string') {
       socket.destroy();

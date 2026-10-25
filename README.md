@@ -23,6 +23,7 @@ npm run dev
 | --- | --- |
 | `npm run dev` | Launches both the 3D authoritative server (`:3001`) and Vite 3D frontend (`:5173`) |
 | `npm start` | Builds `apps/web/dist` and serves the full 3D game + WebSocket server on `http://localhost:3001` |
+| `npm run host` | Hosts LAN PvP from this laptop over HTTPS on port 3001 (see below; macOS + Windows) |
 | `npm run dev:server` | Runs only the 3D WebSocket server (`apps/server/src/index.ts`) with watch mode |
 | `npm run dev:web` | Runs only the Vite 3D frontend (`apps/web`) on `http://localhost:5173` |
 | `npm test` | Runs unit, integration, and end-to-end tests |
@@ -31,20 +32,27 @@ npm run dev
 
 ### Two-laptop LAN PvP playtest
 
-Use one laptop as the host and put both laptops on the same Wi-Fi network or private hotspot. The host runs the existing Node game server and the Vite frontend. In a terminal at the repository root, install dependencies with `npm install` and run `npm run dev`. The guest opens the host's LAN address on port 5173. The host creates a PvP room and shares the six-character code; the guest joins it. Both players calibrate or choose **Skip to Match**, then play from their own browser. Mouse clicks move chess pieces; WASD or arrow keys move during duels, Space uses the primary ability, and Shift holds a Pawn parry.
+Works the same on macOS and Windows. Only the **host** laptop needs Node.js 24+ and this repo; the guest only needs a browser (Chrome, Edge, Safari, or Firefox). Both laptops must be on the same network.
 
-Webcam gestures on the guest require a trusted HTTPS origin. For the LAN demo, use [mkcert](https://github.com/FiloSottile/mkcert) to create a local certificate. On the host:
+On the host, at the repository root:
 
 ```sh
-mkcert -install
-mkdir -p certs
-mkcert -cert-file certs/lan.pem -key-file certs/lan-key.pem HOST_LAN_IP localhost
-ROOK_TLS_CERT=certs/lan.pem ROOK_TLS_KEY=certs/lan-key.pem npm run dev
+npm install
+npm run host
 ```
 
-Replace `HOST_LAN_IP` with the host's current LAN IPv4 address (for example, `192.168.1.20`). Both players then open `https://HOST_LAN_IP:5173`. The host must allow incoming connections to ports 5173 and 3001 through its firewall. If the host IP changes, regenerate the certificate with the new address. On the guest, import the host's `rootCA.pem` into its operating system's trusted root certificates and restart the browser; `mkcert -CAROOT` prints the folder containing that file. **Never copy or share `rootCA-key.pem` or `certs/lan-key.pem`.** Certificate files are ignored by Git.
+This builds the game, creates a self-signed HTTPS certificate for the host's current LAN address (saved in the git-ignored `certs/` folder, no mkcert/openssl needed), and serves the page and game server on one port: `https://<host-lan-ip>:3001`. The terminal prints the exact address.
 
-If the browser reports the certificate as untrusted, webcam access will not work; finish the trust setup before testing gestures. The game remains playable with mouse and keyboard while camera access is unavailable. The host laptop must stay awake and running because rooms are stored in its server memory. On a disconnect during a match, the game pauses and the player has 30 seconds to reconnect before a forfeit.
+1. The host opens the printed link, clicks **Create PvP Duel Room**, then **🔗 Copy invite link** and sends it to the guest. The guest opens the link and joins automatically. (Typing the six-character room code into **Join** also works.)
+2. Each browser warns about the self-signed certificate the first time. Click **Advanced → Proceed** (Chrome/Edge) or **Show Details → visit this website** (Safari). Webcam gestures work after that, because the page is served over HTTPS.
+3. Both players calibrate or choose **Skip to Match**. Mouse clicks move chess pieces; WASD or arrow keys move during duels, Space uses the primary ability, and Shift holds a Pawn parry.
+
+If the guest can't connect:
+- **Firewall:** allow Node.js to accept incoming connections when the OS asks. On Windows, tick **Public networks** too; eduroam and most campus Wi-Fi are classified as Public.
+- **Campus network isolation:** some eduroam networks block traffic between devices ("client isolation"). If the link never loads on the guest even with the firewall open, connect both laptops to a phone hotspot and run `npm run host` again.
+- **Port:** use another port with `PORT=4000 npm run host` (Windows PowerShell: `$env:PORT=4000; npm run host`).
+
+`npm run host -- --no-build` skips the build when nothing changed. The host laptop must stay awake and running because rooms are stored in its server memory. On a disconnect during a match, the game pauses and the player has 30 seconds to reconnect (re-opening the same tab resumes the session) before a forfeit.
 
 ---
 
