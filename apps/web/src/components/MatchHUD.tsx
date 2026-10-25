@@ -7,6 +7,7 @@ import type {
 } from '@let-him-rook/shared';
 import type { VisionFrameData } from '../vision/visionManager.ts';
 import type { CameraTurnIntent } from '../gestures/combatGestures.ts';
+import { buildInviteLink, copyText } from '../networking/invite.ts';
 
 interface MatchHUDProps {
   snapshot: MatchSnapshot | null;
@@ -84,6 +85,8 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
 }) => {
   const [showMiniCam, setShowMiniCam] = useState(true);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copiedInvite, setCopiedInvite] = useState(false);
   const [clockNow, setClockNow] = useState(Date.now());
   useEffect(() => {
     if (!snapshot?.paused) return;
@@ -212,6 +215,15 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   // Strictly gated dev controls check
   const allowDev = true;
 
+  const handleCopyInvite = async () => {
+    const link = await buildInviteLink(snapshot.roomId);
+    setInviteLink(link);
+    if (await copyText(link)) {
+      setCopiedInvite(true);
+      setTimeout(() => setCopiedInvite(false), 1800);
+    }
+  };
+
   const handleCopyRoom = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(snapshot.roomId).catch(() => {});
@@ -283,6 +295,33 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             ROOM: <span style={{ color: '#60a5fa' }}>{snapshot.roomId}</span>{' '}
             {copiedRoom ? '✅' : '📋'}
           </button>
+
+          {snapshot.mode === 'pvp' && (
+            <button
+              onClick={handleCopyInvite}
+              title={inviteLink ?? 'Copy a link the other player can open to join this room'}
+              style={{
+                backgroundColor: '#1e3a8a',
+                padding: '0.45rem 0.9rem',
+                borderRadius: 8,
+                border: '1px solid #3b5bdb',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                color: '#e0e7ff',
+                cursor: 'pointer',
+              }}
+            >
+              {copiedInvite ? '✅ Link copied' : '🔗 Copy invite link'}
+            </button>
+          )}
+
+          {snapshot.mode === 'pvp' && inviteLink && (
+            <span
+              style={{ fontSize: '0.75rem', color: '#cbd5e1', userSelect: 'all', fontFamily: 'monospace' }}
+            >
+              {inviteLink}
+            </span>
+          )}
 
           <div
             style={{

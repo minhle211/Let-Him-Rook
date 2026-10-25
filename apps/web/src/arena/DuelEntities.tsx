@@ -4,12 +4,12 @@ import {
   CLASS_ABILITY_CONFIG,
   FIGHTER_MOVE_SPEED,
   FIGHTER_RADIUS,
-  FIGHTER_TURN_SPEED,
   LEAN_DEADZONE,
   clampToTabletop,
   type PlayerColor,
 } from '@let-him-rook/shared';
 import { PieceCharacter } from '../characters/PieceCharacter.tsx';
+import { stepPredictedFacing } from './facingPrediction.ts';
 import {
   matchStore,
   type InterpolationState,
@@ -89,12 +89,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         const moveZ = intentFresh ? intent.moveZ : 0;
         const turnDir = intentFresh ? intent.turnDir : 0;
 
-        if (Math.abs(turnDir) >= 0.1) {
-          pred.facingRad += Math.sign(turnDir) * FIGHTER_TURN_SPEED * dt;
-          while (pred.facingRad > Math.PI) pred.facingRad -= Math.PI * 2;
-          while (pred.facingRad < -Math.PI) pred.facingRad += Math.PI * 2;
-        }
-        pred.facingRad = lerpAngle(pred.facingRad, localFighter.facingRad, Math.min(1, dt * 10));
+        pred.facingRad = stepPredictedFacing(pred.facingRad, localFighter.facingRad, turnDir, dt);
 
         const mag = Math.hypot(moveX, moveZ);
         const isMovingLocal = mag >= LEAN_DEADZONE;

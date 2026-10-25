@@ -35,6 +35,7 @@ import {
   type CameraTurnIntent,
 } from './gestures/combatGestures.ts';
 import { WebSocketClient } from './networking/wsClient.ts';
+import { clearInviteFromUrl, readInviteRoom } from './networking/invite.ts';
 import { matchStore, type MatchState } from './state/matchStore.ts';
 import { VisionManager, type VisionFrameData } from './vision/visionManager.ts';
 
@@ -110,10 +111,20 @@ export const App: React.FC = () => {
     const ws = new WebSocketClient();
     wsClientRef.current = ws;
 
+    // Invite link (?room=CODE): join that room once connected, unless we're already in it.
+    let inviteRoom = readInviteRoom();
+    if (inviteRoom && sessionStorage.getItem('rook_room_id') !== inviteRoom) {
+      sessionStorage.removeItem('rook_room_id');
+      sessionStorage.removeItem('rook_token');
+    } else if (inviteRoom) {
+      inviteRoom = null; // the saved session reconnects to it
+    }
+
     ws.setListeners({
       onJoined: ({ roomId, color, token, mode }) => {
         setIsLoading(false);
         setError(null);
+        clearInviteFromUrl();
         if (matchStore.getState().snapshot?.roomId !== roomId) {
           setCalibrationProfile(loadSavedCalibration() ?? DEFAULT_CALIBRATION);
         }
@@ -156,6 +167,11 @@ export const App: React.FC = () => {
       },
       onStatusChange: isConnected => {
         setConnected(isConnected);
+        if (isConnected && inviteRoom) {
+          setIsLoading(true);
+          ws.send({ type: 'join_room', roomId: inviteRoom });
+          inviteRoom = null;
+        }
         if (!isConnected) keysPressedRef.current.clear();
       },
     });

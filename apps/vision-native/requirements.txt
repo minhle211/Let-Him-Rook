@@ -1,0 +1,6 @@
+coremltools==9.0
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+pyobjc-framework-AVFoundation==12.2.2
+pyobjc-framework-libdispatch==12.2.2
+websockets==17.3

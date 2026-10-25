@@ -26,6 +26,14 @@ export interface VisionManagerOptions {
 /** If the worker never answers a frame (e.g. GPU context loss), stop waiting after this long. */
 const FRAME_STALL_TIMEOUT_MS = 2000;
 
+/** Native CoreML helper (apps/vision-native) started by `npm run host` / `npm run vision` on this Mac. */
+const NATIVE_VISION_URL = 'ws://127.0.0.1:3101';
+const NATIVE_CONNECT_TIMEOUT_MS = 1500;
+
+type NativeVisionMessage =
+  | { type: 'status'; status: 'loading' | 'ready' | 'error'; error?: string }
+  | { type: 'landmarks'; hands: number[][][]; pose: number[][] | null; inferenceMs: number; isLowLight: boolean };
+
 type VideoWithRVFC = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: (now: number) => void) => number;
   cancelVideoFrameCallback?: (handle: number) => void;
@@ -57,6 +65,8 @@ export class VisionManager {
   private lastTrackedAt: number = 0;
   private rollingFps: number = 60;
   private callbacks: Set<VisionFrameCallback> = new Set();
+  private native: WebSocket | null = null;
+  private stopping = false;
 
   constructor(options: VisionManagerOptions = {}) {
     this.preferredDelegate = options.delegate ?? 'GPU';
@@ -66,6 +76,7 @@ export class VisionManager {
     if (this.visionMode === mode) return;
     this.visionMode = mode;
     this.postToWorker({ type: 'set_mode', mode });
+    this.sendToNative({ type: 'set_mode', mode });
   }
 
   public getVisionMode(): VisionMode {
@@ -91,20 +102,28 @@ export class VisionManager {
     }
 
     this.video = videoElement;
-
-    // Start loading models in parallel with the camera permission prompt.
+    this.stopping = false;
     this.workerStatus = 'loading';
     this.workerReady = false;
-    this.startWorker();
+    this.emitStatusFrame();
 
-    // 1. Request 60 FPS low-latency webcam stream
+    // Prefer the native CoreML helper: tracking then runs on the Neural Engine and no
+    // MediaPipe runs in the browser at all. Without it, fall back to the in-browser worker.
+    const native = await this.connectNative();
+    if (this.video !== videoElement) {
+      native?.close();
+      return;
+    }
+    if (!native) this.startWorker();
+
+    // 1. Webcam stream: preview only when the native helper owns tracking.
     if (navigator.mediaDevices?.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 60, min: 30 },
+            frameRate: native ? { ideal: 30 } : { ideal: 60, min: 30 },
             facingMode: 'user',
           },
           audio: false,
@@ -139,7 +158,66 @@ export class VisionManager {
     }
 
     this.emitStatusFrame();
-    this.startLoop();
+    if (!this.native) this.startLoop();
+  }
+
+  private connectNative(): Promise<WebSocket | null> {
+    return new Promise(resolve => {
+      let settled = false;
+      const ws = new WebSocket(NATIVE_VISION_URL);
+      const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!ok) {
+          ws.close();
+          resolve(null);
+          return;
+        }
+        this.native = ws;
+        ws.onmessage = event => this.onNativeMessage(JSON.parse(String(event.data)) as NativeVisionMessage);
+        ws.onclose = () => this.onNativeClosed(ws);
+        this.sendToNative({ type: 'set_mode', mode: this.visionMode });
+        console.log('[VisionManager] Using native CoreML vision helper (Neural Engine).');
+        resolve(ws);
+      };
+      const timer = setTimeout(() => done(false), NATIVE_CONNECT_TIMEOUT_MS);
+      ws.onopen = () => done(true);
+      ws.onerror = () => done(false);
+    });
+  }
+
+  private sendToNative(message: { type: 'set_mode'; mode: VisionMode }): void {
+    if (this.native?.readyState === WebSocket.OPEN) this.native.send(JSON.stringify(message));
+  }
+
+  private onNativeMessage(msg: NativeVisionMessage): void {
+    if (msg.type === 'status') {
+      this.delegate = 'ANE';
+      this.hasHandModel = this.hasPoseModel = msg.status === 'ready';
+      this.workerReady = msg.status === 'ready';
+      this.workerStatus = msg.status;
+      this.workerError = msg.error;
+      this.emitStatusFrame();
+      return;
+    }
+    if (!this.workerReady) return;
+    const hands = msg.hands.map(hand => hand.map(([x, y, z]) => ({ x, y, z })));
+    const pose = msg.pose ? msg.pose.map(([x, y, z, visibility]) => ({ x, y, z, visibility })) : null;
+    this.handleOutput(hands, pose, performance.now(), msg.inferenceMs, msg.isLowLight);
+  }
+
+  /** Helper stopped mid-game: keep tracking with the in-browser worker. */
+  private onNativeClosed(ws: WebSocket): void {
+    if (this.native !== ws) return;
+    this.native = null;
+    if (this.stopping || !this.video) return;
+    console.warn('[VisionManager] Native vision helper disconnected; switching to in-browser MediaPipe.');
+    this.workerReady = false;
+    this.workerStatus = 'loading';
+    this.emitStatusFrame();
+    this.startWorker();
+    if (this.stream) this.startLoop();
   }
 
   private startWorker(): void {
@@ -369,6 +447,12 @@ export class VisionManager {
   }
 
   public stop(): void {
+    this.stopping = true;
+    if (this.native) {
+      const ws = this.native;
+      this.native = null;
+      ws.close();
+    }
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
