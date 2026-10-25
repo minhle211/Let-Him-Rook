@@ -115,7 +115,7 @@ export class BotController {
       // Trigger ability on cooldown
       if (now >= this.nextAbilityAt && now >= fighter.cooldowns.primary) {
         this.nextAbilityAt = now + 450;
-        const ability = this.pickAbility(fighter.pieceClass, dist);
+        const ability = this.pickAbility(fighter.pieceClass, dist, angleDiff);
         if (ability) {
           match.handleDuelAbility('b', ability, undefined, `bot_ab_${++this.actionCounter}`, now);
         }
@@ -135,14 +135,14 @@ export class BotController {
     }
   }
 
-  private pickAbility(pieceClass: PieceClass, dist: number): AbilityType | null {
+  private pickAbility(pieceClass: PieceClass, dist: number, angleDiff = 0): AbilityType | null {
     switch (pieceClass) {
       case 'pawn':
         return dist <= 2.15 ? 'pawn_sweep' : null;
       case 'rook':
         return 'rook_shot';
       case 'knight':
-        return dist <= 4.4 ? 'knight_cleave' : null;
+        return Math.abs(angleDiff) <= Math.PI / 3 ? 'knight_cleave' : null;
       case 'bishop':
         return 'bishop_ice_bolt';
       case 'queen':

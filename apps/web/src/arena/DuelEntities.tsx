@@ -68,6 +68,7 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
       const activeLocalColor = localColor || 'w';
       const isLocalAttacker = targetDuel.attacker.color === activeLocalColor;
       const localFighter = isLocalAttacker ? targetDuel.attacker : targetDuel.defender;
+      const prevLocalFighter = isLocalAttacker ? prevDuel?.attacker : prevDuel?.defender;
       const remoteFighter = isLocalAttacker ? targetDuel.defender : targetDuel.attacker;
       const prevRemoteFighter = isLocalAttacker ? prevDuel?.defender : prevDuel?.attacker;
       const remoteInterpX = lerp(prevRemoteFighter?.x ?? remoteFighter.x, remoteFighter.x, alpha);
@@ -76,7 +77,15 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
       // Local client-side prediction + exponential reconciliation
       const pred = predictedLocalRef.current;
       const snapDist = Math.hypot(pred.x - localFighter.x, pred.z - localFighter.z);
-      if (!pred.initialized || pred.startedAt !== targetDuel.startedAt || snapDist > 1.8) {
+      const justTeleported =
+        localFighter.teleportWindupRemainingMs > 0 &&
+        (prevLocalFighter?.teleportWindupRemainingMs ?? 0) === 0;
+      if (
+        !pred.initialized ||
+        pred.startedAt !== targetDuel.startedAt ||
+        snapDist > 1.8 ||
+        justTeleported
+      ) {
         pred.x = localFighter.x;
         pred.z = localFighter.z;
         pred.facingRad = localFighter.facingRad;

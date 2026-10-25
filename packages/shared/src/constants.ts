@@ -61,6 +61,9 @@ export const CLASS_ABILITY_CONFIG = {
   knight: {
     cleave: {
       maxTeleportDist: 4.5,
+      forwardTeleportDist: 3.0,
+      targetConeDeg: 120,
+      obstacleConeDeg: 40,
       targetOffsetDist: 1.5,
       windupMs: 350,
       damage: 24,
