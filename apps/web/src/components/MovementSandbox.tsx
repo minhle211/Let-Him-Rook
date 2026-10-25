@@ -105,7 +105,7 @@ export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
   const sensitivity = { ...DEFAULT_MOVEMENT_SENSITIVITY, ...profile.movementSensitivity };
   return <section aria-label="Movement gesture sandbox" style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '0.8rem', marginBottom: '1rem', color: '#e2e8f0' }}>
     <strong>Movement Sandbox</strong>
-    <p style={{ fontSize: '0.83rem', color: '#94a3b8' }}>Step forward, backward, left, and right. Return to your calibrated stance to stop. Try diagonals too. This preview does not move your fighter.</p>
+    <p style={{ fontSize: '0.83rem', color: '#94a3b8' }}>Step forward, backward, left, and right. Return to your calibrated stance to stop. Single cardinal direction detected (no diagonals). This preview does not move your fighter.</p>
     <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
       <div aria-label="Live movement direction" style={{ position: 'relative', width: 140, height: 100, background: '#1e293b', borderRadius: 8, border: '1px solid #475569' }}>
         <span style={{ position: 'absolute', top: 2, left: 42, fontSize: 11 }}>Forward</span>

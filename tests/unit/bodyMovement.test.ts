@@ -11,18 +11,55 @@ test('body capture averages 75 frames and rejects unstable stance',()=>{
  for(let i=0;i<75;i++) result=capture.update(pose(.3,i%2?.4:.6),5000+i*50);
  assert.deepEqual(result,{error:true});
 });
-test('depth movement persists, normalizes diagonals, ignores height and stops on tracking loss',()=>{
+test('depth movement persists, resolves slanted inputs to cardinal direction, ignores height and stops on tracking loss',()=>{
  const c=new TorsoLeanController();
  assert.deepEqual(c.update(pose(.3,.5,.7),profile,0),{moveX:0,moveZ:0});
  let move;
  for(let t=50;t<=1000;t+=50) move=c.update(pose(.4,.75),profile,t);
- assert.ok(move!.moveX>0&&move!.moveZ<0); assert.ok(Math.abs(Math.hypot(move!.moveX,move!.moveZ)-1)<1e-6);
+ // When forward depth dominates lateral lean, output is strictly cardinal Forward [0, -1]
+ assert.deepEqual(move, {moveX: 0, moveZ: -1});
  assert.deepEqual(c.update(null,profile,1050),{moveX:0,moveZ:0});
  c.reset(); assert.deepEqual(c.update(pose(),profile,2000),{moveX:0,moveZ:0});
  for(let t=2050;t<=3000;t+=50) move=c.update(pose(.2),profile,t);
  assert.equal(move!.moveZ,1);
  for(let t=3050;t<=4000;t+=50) move=c.update(pose(),profile,t);
  assert.deepEqual(move,{moveX:0,moveZ:0});
+});
+
+test('diagonal movement detection is eliminated: slanted inputs output strictly single cardinal axis', () => {
+  const c = new TorsoLeanController();
+  let move;
+
+  // 1. Right dominates over forward
+  for (let t = 0; t <= 500; t += 50) move = c.update(pose(.37, .90), profile, t);
+  assert.deepEqual(move, { moveX: 1, moveZ: 0 }, 'Dominant lateral lean should resolve to cardinal Right');
+
+  // Return to neutral
+  c.reset();
+  for (let t = 600; t <= 1000; t += 50) move = c.update(pose(.3, .5), profile, t);
+  assert.deepEqual(move, { moveX: 0, moveZ: 0 });
+
+  // 2. Backward dominates over left
+  for (let t = 1100; t <= 1600; t += 50) move = c.update(pose(.15, .40), profile, t);
+  assert.deepEqual(move, { moveX: 0, moveZ: 1 }, 'Dominant backward step should resolve to cardinal Backward');
+
+  // Verify that moveX and moveZ are NEVER simultaneously non-zero across multiple slanted inputs
+  const slantedInputs = [
+    pose(.4, .75),   // Forward + Right
+    pose(.4, .25),   // Forward + Left
+    pose(.2, .75),   // Backward + Right
+    pose(.2, .25),   // Backward + Left
+    pose(.38, .85),  // Slanted right-forward
+    pose(.18, .15),  // Slanted left-backward
+  ];
+  for (const input of slantedInputs) {
+    c.reset();
+    for (let t = 0; t <= 500; t += 50) move = c.update(input, profile, t);
+    assert.ok(
+      !(move!.moveX !== 0 && move!.moveZ !== 0),
+      `Expected cardinal-only movement, got diagonal moveX=${move!.moveX}, moveZ=${move!.moveZ}`
+    );
+  }
 });
 
 test('combined calibration uses five-second open then pinch window', async () => {

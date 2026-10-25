@@ -175,15 +175,57 @@ export class TorsoLeanController {
     this.x+=alpha*(m.noseX-this.x); this.width+=alpha*(m.width-this.width); this.last=now;
     const x=(this.x-base.noseX)/base.shoulderWidth, r=this.width/base.shoulderWidth;
     const t = movementThresholds(calibration.movementSensitivity);
-    const desired=[x>=t.right?1:x<=-t.left?-1:0,r>=t.forward?-1:r<=t.backward?1:0];
-    const release=[this.axes[0]>0?x<=t.rightRelease:this.axes[0]<0?x>=-t.leftRelease:true,this.axes[1]<0?r<=t.forwardRelease:this.axes[1]>0?r>=t.backwardRelease:true];
-    for(let i=0;i<2;i++) {
-      if(release[i]) this.axes[i]=0;
-      if(desired[i]!==this.candidates[i]) {this.candidates[i]=desired[i];this.since[i]=now;}
-      if(desired[i] && now-this.since[i]>=BODY_MOVEMENT.activationMs) this.axes[i]=desired[i];
+    let rawX = x >= t.right ? 1 : x <= -t.left ? -1 : 0;
+    let rawZ = r >= t.forward ? -1 : r <= t.backward ? 1 : 0;
+
+    let ratioX = 0;
+    if (rawX > 0) ratioX = x / t.right;
+    else if (rawX < 0) ratioX = Math.abs(x) / t.left;
+
+    let ratioZ = 0;
+    if (rawZ < 0) ratioZ = (r - 1) / Math.max(1e-4, t.forward - 1);
+    else if (rawZ > 0) ratioZ = (1 - r) / Math.max(1e-4, 1 - t.backward);
+
+    // Suppress diagonal candidate: select single dominant cardinal axis
+    if (rawX !== 0 && rawZ !== 0) {
+      if (this.axes[0] !== 0 && this.axes[1] === 0) {
+        if (ratioZ > ratioX * 1.25) rawX = 0;
+        else rawZ = 0;
+      } else if (this.axes[1] !== 0 && this.axes[0] === 0) {
+        if (ratioX > ratioZ * 1.25) rawZ = 0;
+        else rawX = 0;
+      } else {
+        if (ratioX >= ratioZ) rawZ = 0;
+        else rawX = 0;
+      }
     }
-    const length=Math.max(1,Math.hypot(...this.axes));
-    return {moveX:this.axes[0]/length,moveZ:this.axes[1]/length};
+
+    const desired = [rawX, rawZ];
+    const release = [
+      this.axes[0] > 0 ? x <= t.rightRelease : this.axes[0] < 0 ? x >= -t.leftRelease : true,
+      this.axes[1] < 0 ? r <= t.forwardRelease : this.axes[1] > 0 ? r >= t.backwardRelease : true,
+    ];
+
+    for (let i = 0; i < 2; i++) {
+      if (release[i]) this.axes[i] = 0;
+      if (desired[i] !== this.candidates[i]) {
+        this.candidates[i] = desired[i];
+        this.since[i] = now;
+      }
+      if (desired[i] && now - this.since[i] >= BODY_MOVEMENT.activationMs) {
+        this.axes[i] = desired[i];
+        this.axes[1 - i] = 0;
+        this.candidates[1 - i] = 0;
+      }
+    }
+
+    // Safety guarantee: only single cardinal direction active
+    if (this.axes[0] !== 0 && this.axes[1] !== 0) {
+      if (ratioX >= ratioZ) this.axes[1] = 0;
+      else this.axes[0] = 0;
+    }
+
+    return { moveX: this.axes[0], moveZ: this.axes[1] };
   }
 }
 
