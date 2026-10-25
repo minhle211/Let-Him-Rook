@@ -189,7 +189,7 @@ test('Duel Simulator: Rook fires shot and every 3rd shot is Cannon Bomb', () => 
   assert.equal(duel.projectiles[2].splashRadius, CLASS_ABILITY_CONFIG.rook.cannonBomb.splashRadius);
 });
 
-test('Duel Simulator: Knight cleave teleport and range/obstacle validation', () => {
+test('Duel Simulator: Knight cleave teleport, 120-deg camera cone, 3u forward fallback, and 40-deg obstacle interception', () => {
   const pending = {
     from: 'b1' as const,
     to: 'c3' as const,
@@ -197,30 +197,151 @@ test('Duel Simulator: Knight cleave teleport and range/obstacle validation', () 
     attackerClass: 'knight' as const,
     defenderClass: 'knight' as const,
   };
-  const duel = createDuel(DUMMY_FEN, pending, 1000);
 
-  // Place opponent too far (> 7 units)
-  duel.attacker.x = -4.0;
-  duel.defender.x = 4.0;
-  const failRes = applyAbilityIntent(duel, 'w', 'knight_cleave', undefined, 1000);
-  assert.equal(failRes.accepted, false);
-  assert.equal(failRes.reason, 'blocked_or_out_of_range');
-  assert.equal(duel.attacker.cooldowns.primary, 0, 'Failed cleave must NOT consume cooldown');
+  // 1. Opponent out of range (> 4.5u teleport dist): teleports 3.0u forward in camera direction
+  const duelFar = createDuel(DUMMY_FEN, pending, 1000);
+  duelFar.obstacles = [];
+  duelFar.attacker.x = 0;
+  duelFar.attacker.z = 3.0;
+  duelFar.attacker.facingRad = 0; // facing -Z
+  duelFar.defender.x = 0;
+  duelFar.defender.z = -5.0; // 8.0u away
 
-  // Place opponent within reach (3.0 units)
-  duel.attacker.x = 0;
-  duel.attacker.z = 0;
-  duel.defender.x = 0;
-  duel.defender.z = -3.0;
+  const farRes = applyAbilityIntent(duelFar, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(farRes.accepted, true);
+  assert.ok(Math.abs(duelFar.attacker.x - 0) < 0.01);
+  assert.ok(Math.abs(duelFar.attacker.z - 0) < 0.01, 'Should teleport 3.0u forward from z=3.0 to z=0.0');
+  assert.ok(duelFar.attacker.teleportWindupRemainingMs > 0);
 
-  const passRes = applyAbilityIntent(duel, 'w', 'knight_cleave', undefined, 1000);
+  // 2. Opponent close (3.0u) but outside 120-deg front cone (e.g. behind knight): teleports 3.0u forward in camera direction
+  const duelBehind = createDuel(DUMMY_FEN, pending, 1000);
+  duelBehind.obstacles = [];
+  duelBehind.attacker.x = 0;
+  duelBehind.attacker.z = 0;
+  duelBehind.attacker.facingRad = 0; // facing -Z
+  duelBehind.defender.x = 0;
+  duelBehind.defender.z = 2.5; // behind knight (+Z)
+
+  const behindRes = applyAbilityIntent(duelBehind, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(behindRes.accepted, true);
+  assert.ok(Math.abs(duelBehind.attacker.x - 0) < 0.01);
+  assert.ok(Math.abs(duelBehind.attacker.z - -3.0) < 0.01, 'Should teleport 3.0u forward along camera (-Z) instead of backward to opponent');
+  stepDuel(duelBehind, 1400);
+  assert.equal(duelBehind.defender.hp, FIGHTER_MAX_HP, 'Opponent behind knight should not take cleave damage');
+
+  // 3. Opponent within 120-deg front cone (e.g. 45 deg off-center) and within range: teleports 1.5u in front of opponent, faces them, and cleaves
+  const duelInCone = createDuel(DUMMY_FEN, pending, 1000);
+  duelInCone.obstacles = [];
+  duelInCone.attacker.x = 0;
+  duelInCone.attacker.z = 0;
+  duelInCone.attacker.facingRad = 0; // facing -Z
+  duelInCone.defender.x = 2.0;
+  duelInCone.defender.z = -2.0; // 45 deg to the front-right, dist ~2.83u
+
+  const passRes = applyAbilityIntent(duelInCone, 'w', 'knight_cleave', undefined, 1000);
   assert.equal(passRes.accepted, true);
-  assert.ok(duel.attacker.teleportWindupRemainingMs > 0, 'Should start windup');
+  assert.ok(duelInCone.attacker.teleportWindupRemainingMs > 0, 'Should start windup');
+  const expectedFacing = Math.atan2(
+    duelInCone.defender.x - duelInCone.attacker.x,
+    -(duelInCone.defender.z - duelInCone.attacker.z)
+  );
+  assert.ok(Math.abs(duelInCone.attacker.facingRad - expectedFacing) < 0.01, 'Should rotate facingRad toward opponent');
 
   // Step through 350ms windup
-  stepDuel(duel, 1000 + 400);
-  assert.equal(duel.attacker.teleportWindupRemainingMs, 0);
-  assert.equal(duel.defender.hp, FIGHTER_MAX_HP - CLASS_ABILITY_CONFIG.knight.cleave.damage);
+  stepDuel(duelInCone, 1000 + 400);
+  assert.equal(duelInCone.attacker.teleportWindupRemainingMs, 0);
+  assert.equal(duelInCone.defender.hp, FIGHTER_MAX_HP - CLASS_ABILITY_CONFIG.knight.cleave.damage);
+
+  // 4. Multiple obstacles blocking in the 40-deg front cone: teleports to the closest blocking obstacle and cleaves it
+  const duelObs = createDuel(DUMMY_FEN, pending, 1000);
+  duelObs.attacker.x = 0;
+  duelObs.attacker.z = 3.0;
+  duelObs.attacker.facingRad = 0; // facing -Z
+  duelObs.defender.x = 0;
+  duelObs.defender.z = -4.0;
+  duelObs.obstacles = [
+    {
+      id: 'obs_near',
+      type: 'piece',
+      x: 0.1,
+      z: 1.0, // 2.0u in front of knight, well within 40-deg cone and blocking path
+      radius: 0.42,
+      hitsRemaining: 3,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+    {
+      id: 'obs_far',
+      type: 'piece',
+      x: -0.1,
+      z: 0.2, // 2.8u in front of knight, also blocking path but farther
+      radius: 0.42,
+      hitsRemaining: 3,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+  ];
+
+  const obsRes = applyAbilityIntent(duelObs, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(obsRes.accepted, true);
+  const distToNearObs = Math.hypot(
+    duelObs.attacker.x - duelObs.obstacles[0].x,
+    duelObs.attacker.z - duelObs.obstacles[0].z
+  );
+  assert.ok(
+    Math.abs(distToNearObs - CLASS_ABILITY_CONFIG.knight.cleave.targetOffsetDist) < 0.05,
+    `Knight should land 1.5u in front of closest blocking obstacle (got ${distToNearObs})`
+  );
+
+  // Complete windup: cleave damages obstacle in front arc
+  stepDuel(duelObs, 1000 + 400);
+  assert.equal(duelObs.obstacles[0].hitsRemaining, 2, 'Closest obstacle should take 1 cleave hit');
+  assert.ok(duelObs.events.some(e => e.type === 'obstacle_damage' && e.data.obstacleId === 'obs_near'));
+
+  // 5. Obstacle outside the 40-deg front cone (> 20 deg off-center) is ignored when locking onto opponent in 120-deg cone
+  const duelObsOutside40 = createDuel(DUMMY_FEN, pending, 1000);
+  duelObsOutside40.attacker.x = 0;
+  duelObsOutside40.attacker.z = 0;
+  duelObsOutside40.attacker.facingRad = 0; // facing -Z
+  // Place opponent at 45 deg (within 120-deg cone)
+  duelObsOutside40.defender.x = 3.0;
+  duelObsOutside40.defender.z = -3.0;
+  // Place obstacle along that 45-deg line (outside the 40-deg front camera cone!)
+  duelObsOutside40.obstacles = [
+    {
+      id: 'obs_45deg',
+      type: 'piece',
+      x: 1.2,
+      z: -1.2,
+      radius: 0.42,
+      hitsRemaining: 1,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+  ];
+  const resOutside40 = applyAbilityIntent(duelObsOutside40, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(resOutside40.accepted, true);
+  const distToOppAfter = Math.hypot(
+    duelObsOutside40.attacker.x - duelObsOutside40.defender.x,
+    duelObsOutside40.attacker.z - duelObsOutside40.defender.z
+  );
+  assert.ok(
+    Math.abs(distToOppAfter - CLASS_ABILITY_CONFIG.knight.cleave.targetOffsetDist) < 0.05,
+    'Obstacle outside 40-deg front camera cone should not intercept teleport to opponent'
+  );
+
+  // 6. Forward 3u teleport near tabletop edge clamps safely within [-7, 7] and never fails
+  const duelEdge = createDuel(DUMMY_FEN, pending, 1000);
+  duelEdge.obstacles = [];
+  duelEdge.attacker.x = 0;
+  duelEdge.attacker.z = -5.5;
+  duelEdge.attacker.facingRad = 0; // facing -Z toward z = -7 border
+  duelEdge.defender.x = 0;
+  duelEdge.defender.z = 5.0; // behind knight
+
+  const edgeRes = applyAbilityIntent(duelEdge, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(edgeRes.accepted, true);
+  assert.ok(duelEdge.attacker.z >= -TABLE_HALF_EXTENT, 'Must clamp within tabletop boundary');
 });
 
 test('Duel Simulator: Bishop Ice Bolt freezes obstacle and creates 1.5u ice hazard', () => {
