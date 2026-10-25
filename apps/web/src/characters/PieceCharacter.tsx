@@ -128,10 +128,10 @@ export const PieceCharacter: React.FC<PieceCharacterProps> = ({
                 <meshStandardMaterial color="#cbd5e1" roughness={0.45} metalness={0.5} />
               </mesh>
             </group>
-            <group ref={slashRef} visible={false} position={[0, 0.65, -0.15]}>
+            <group ref={slashRef} visible={false} position={[0, 0.65, -0.25]}>
               <mesh rotation={[-Math.PI / 2, 0, 0]}>
-                <ringGeometry args={[0.65, 0.95, 16, 1, Math.PI * 0.12, Math.PI * 0.76]} />
-                <meshBasicMaterial color="#fde68a" transparent opacity={0.8} side={2} depthWrite={false} />
+                <ringGeometry args={[0.6, 1.05, 20, 1, Math.PI * 0.1, Math.PI * 0.8]} />
+                <meshBasicMaterial color="#fbbf24" transparent opacity={0.85} side={2} depthWrite={false} />
               </mesh>
             </group>
             {/* Cylinder face points forward, with a raised defensive pose. */}

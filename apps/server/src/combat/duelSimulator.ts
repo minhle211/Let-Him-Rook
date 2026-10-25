@@ -18,6 +18,7 @@ import {
   TRACKING_LOSS_STOP_MS,
   clampToTabletop,
   indexToSquare,
+  isRangedPieceClass,
   squareToTableCoords,
   type AbilityType,
   type BoardSquare,
@@ -778,6 +779,12 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         fighter.teleportWindupRemainingMs - dtMs
       );
       if (fighter.teleportWindupRemainingMs === 0) {
+        duel.events.push({
+          type: 'melee_swing',
+          timestamp: now,
+          data: { owner: fighter.color, ability: 'knight_cleave' },
+        });
+
         const cleaveCfg = CLASS_ABILITY_CONFIG.knight.cleave;
         const facingX = Math.sin(fighter.facingRad);
         const facingZ = -Math.cos(fighter.facingRad);
@@ -991,15 +998,56 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
     const dist = Math.hypot(dx, dz) || 1;
     ally.facingRad = Math.atan2(dx, -dz);
 
-    // Approach enemy up to 2.0u
-    if (dist > 2.0) {
-      const speed = CLASS_ABILITY_CONFIG.king.summon.speed;
-      const moveDist = speed * dtSec;
-      ally.x += (dx / dist) * moveDist;
-      ally.z += (dz / dist) * moveDist;
-      const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
-      ally.x = clamped.x;
-      ally.z = clamped.z;
+    const isRanged = isRangedPieceClass(ally.pieceClass);
+
+    if (isRanged) {
+      const cfg = CLASS_ABILITY_CONFIG.king.summon;
+      const elapsedMs = Math.max(0, cfg.durationMs - ally.remainingMs);
+      const currentPhase = Math.floor(elapsedMs / cfg.recalibrateIntervalMs);
+
+      // Recalibrate every 3s: at the start of a move phase (even phases 0, 2), check distance to target
+      if (ally.phaseIndex !== currentPhase) {
+        ally.phaseIndex = currentPhase;
+        if (currentPhase % 2 === 0) {
+          // If closer than 3 blocks, prepare to move away from target for 3 seconds
+          ally.isMovingAway = dist < cfg.rangedTargetDistance;
+        }
+      }
+
+      if (currentPhase % 2 === 0) {
+        // Move phase (3 seconds)
+        const speed = cfg.speed;
+        const moveDist = speed * dtSec;
+
+        if (ally.isMovingAway) {
+          // Move away from target for 3 seconds
+          ally.x -= (dx / dist) * moveDist;
+          ally.z -= (dz / dist) * moveDist;
+          const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+          ally.x = clamped.x;
+          ally.z = clamped.z;
+        } else if (dist > cfg.rangedTargetDistance) {
+          // Maintain 3 blocks distance by closing the gap
+          const step = Math.min(moveDist, dist - cfg.rangedTargetDistance);
+          ally.x += (dx / dist) * step;
+          ally.z += (dz / dist) * step;
+          const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+          ally.x = clamped.x;
+          ally.z = clamped.z;
+        }
+      }
+      // If currentPhase % 2 === 1: Stop phase (3 seconds)
+    } else {
+      // Melee summon (pawn, knight): approach enemy up to 2.0u
+      if (dist > 2.0) {
+        const speed = CLASS_ABILITY_CONFIG.king.summon.speed;
+        const moveDist = speed * dtSec;
+        ally.x += (dx / dist) * moveDist;
+        ally.z += (dz / dist) * moveDist;
+        const clamped = clampToTabletop(ally.x, ally.z, FIGHTER_RADIUS);
+        ally.x = clamped.x;
+        ally.z = clamped.z;
+      }
     }
 
     // Ally attacks every 2.0s for 75% of its piece's normal damage

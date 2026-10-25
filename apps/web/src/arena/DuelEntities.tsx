@@ -310,7 +310,9 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
     v =>
       now - v.createdAt < 350 &&
       ((v.event.type === 'melee_swing' && v.event.data.owner === attackerColor) ||
-        (v.event.type === 'melee_hit' && v.event.data.target === defenderColor) ||
+        (v.event.type === 'melee_hit' &&
+          v.event.data.target === defenderColor &&
+          !v.event.data.attackerId) ||
         (v.event.type === 'projectile_spawn' && v.event.data.owner === attackerColor) ||
         (v.event.type === 'summon_ally' && v.event.data.owner === attackerColor))
   );
@@ -318,7 +320,9 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
     v =>
       now - v.createdAt < 350 &&
       ((v.event.type === 'melee_swing' && v.event.data.owner === defenderColor) ||
-        (v.event.type === 'melee_hit' && v.event.data.target === attackerColor) ||
+        (v.event.type === 'melee_hit' &&
+          v.event.data.target === attackerColor &&
+          !v.event.data.attackerId) ||
         (v.event.type === 'projectile_spawn' && v.event.data.owner === defenderColor) ||
         (v.event.type === 'summon_ally' && v.event.data.owner === defenderColor))
   );
@@ -352,12 +356,6 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
           isHit={isAttackerHit}
           isAttacking={isAttackerAttacking}
         />
-        {isAttackerAttacking && (
-          <mesh position={[0, 0.55, -0.7]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[0.4, 1.3, 16, 1, -Math.PI * 0.4, Math.PI * 0.8]} />
-            <meshBasicMaterial color="#fbbf24" transparent opacity={0.75} />
-          </mesh>
-        )}
       </group>
 
       {/* Defender Fighter (position controlled strictly in useFrame to prevent 20Hz React snap) */}
@@ -387,12 +385,6 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
           isHit={isDefenderHit}
           isAttacking={isDefenderAttacking}
         />
-        {isDefenderAttacking && (
-          <mesh position={[0, 0.55, -0.7]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[0.4, 1.3, 16, 1, -Math.PI * 0.4, Math.PI * 0.8]} />
-            <meshBasicMaterial color="#38bdf8" transparent opacity={0.75} />
-          </mesh>
-        )}
       </group>
 
       {/* Projectiles (interpolated at 60fps via projectileRefs) */}
