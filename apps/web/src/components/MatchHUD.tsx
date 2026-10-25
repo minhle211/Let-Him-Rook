@@ -95,9 +95,13 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   useEffect(() => {
     if (!showMiniCam) return;
     let animId: number | null = null;
+    let lastDrawAt = 0;
 
-    const renderMini = () => {
+    const renderMini = (now: number) => {
       animId = requestAnimationFrame(renderMini);
+      // The preview is small; drawing it at 30 FPS halves canvas/video uploads.
+      if (now - lastDrawAt < 1000 / 30) return;
+      lastDrawAt = now;
       const canvas = miniCanvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');

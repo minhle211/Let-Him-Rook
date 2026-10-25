@@ -8,6 +8,8 @@ let handLandmarker = null;
 let poseLandmarker = null;
 let isInitialized = false;
 let lastTimestampMs = 0;
+let processedFrames = 0;
+let lastPose = null;
 
 const CDN_VISION_BUNDLE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
@@ -147,12 +149,17 @@ self.onmessage = async event => {
           hands = handResult.landmarks.map(h => mirrorLandmarks(h)).filter(Boolean);
         }
       }
-      if (poseLandmarker && imageBitmap) {
+      // Pose inference is considerably more expensive than hand tracking. Keep the
+      // most recent pose between samples so gestures stay responsive while pose
+      // runs at half the hand-tracking rate.
+      if (poseLandmarker && imageBitmap && processedFrames % 2 === 0) {
         const poseResult = poseLandmarker.detectForVideo(imageBitmap, frameTs);
         if (poseResult?.landmarks?.[0]) {
-          pose = mirrorLandmarks(poseResult.landmarks[0]);
+          lastPose = mirrorLandmarks(poseResult.landmarks[0]);
         }
       }
+      pose = lastPose;
+      processedFrames += 1;
     } catch (err) {
       console.warn('[VisionWorker] Inference warning:', err);
     } finally {

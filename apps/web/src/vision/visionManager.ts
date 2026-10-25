@@ -1,9 +1,3 @@
-import {
-  FilesetResolver,
-  HandLandmarker,
-  PoseLandmarker,
-} from '@mediapipe/tasks-vision';
-
 export interface Landmark3D {
   x: number;
   y: number;
@@ -33,21 +27,10 @@ export interface VisionFrameData {
 
 export type VisionFrameCallback = (data: VisionFrameData) => void;
 
-function mirrorLandmarks(landmarks: Landmark3D[] | null | undefined): Landmark3D[] | null {
-  if (!landmarks || !Array.isArray(landmarks)) return null;
-  return landmarks.map(lm => ({
-    x: 1 - lm.x,
-    y: lm.y,
-    z: lm.z,
-    visibility: lm.visibility,
-  }));
-}
-
 export class VisionManager {
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
-  private handLandmarker: HandLandmarker | null = null;
-  private poseLandmarker: PoseLandmarker | null = null;
+  private worker: Worker | null = null;
   private workerReady: boolean = false;
   private workerStatus: 'loading' | 'ready' | 'error' = 'loading';
   private workerError?: string;
@@ -63,6 +46,8 @@ export class VisionManager {
   private callbacks: Set<VisionFrameCallback> = new Set();
   private sampleCanvas: HTMLCanvasElement | null = null;
   private sampleCtx: CanvasRenderingContext2D | null = null;
+  private lastBrightnessCheck = 0;
+  private cachedLowLight = false;
 
   public subscribe(cb: VisionFrameCallback): () => void {
     this.callbacks.add(cb);
@@ -95,6 +80,7 @@ export class VisionManager {
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
+            frameRate: { ideal: 60, max: 60 },
             facingMode: 'user',
           },
           audio: false,
@@ -120,90 +106,38 @@ export class VisionManager {
       return;
     }
 
-    // 2. Initialize MediaPipe Models directly
+    // 2. Initialize MediaPipe in a worker so inference never blocks WebGL.
     this.workerStatus = 'loading';
     this.workerReady = false;
     this.emitStatusFrame();
 
     try {
-      let visionFileset = null;
-      try {
-        visionFileset = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
-      } catch (wasmErr) {
-        console.warn('[VisionManager] Local wasm failed, trying CDN fallback:', wasmErr);
-        visionFileset = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-        );
-      }
-
-      const [handInstance, poseInstance] = await Promise.all([
-        HandLandmarker.createFromOptions(visionFileset, {
-          baseOptions: { modelAssetPath: '/mediapipe/hand_landmarker.task' },
-          numHands: 2,
-          runningMode: 'VIDEO',
-          minHandDetectionConfidence: 0.5,
-          minHandPresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        }).catch(err => {
-          console.warn('[VisionManager] Local hand model failed, retrying CDN:', err);
-          return HandLandmarker.createFromOptions(visionFileset, {
-            baseOptions: {
-              modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-            },
-            numHands: 2,
-            runningMode: 'VIDEO',
-            minHandDetectionConfidence: 0.5,
-            minHandPresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          }).catch(cdnErr => {
-            console.error('[VisionManager] HandLandmarker CDN failed:', cdnErr);
-            return null;
-          });
-        }),
-        PoseLandmarker.createFromOptions(visionFileset, {
-          baseOptions: { modelAssetPath: '/mediapipe/pose_landmarker_lite.task' },
-          runningMode: 'VIDEO',
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        }).catch(err => {
-          console.warn('[VisionManager] Local pose model failed, retrying CDN:', err);
-          return PoseLandmarker.createFromOptions(visionFileset, {
-            baseOptions: {
-              modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-            },
-            runningMode: 'VIDEO',
-            minPoseDetectionConfidence: 0.5,
-            minPosePresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5,
-          }).catch(cdnErr => {
-            console.error('[VisionManager] PoseLandmarker CDN failed:', cdnErr);
-            return null;
-          });
-        }),
-      ]);
-
-      this.handLandmarker = handInstance;
-      this.poseLandmarker = poseInstance;
-      this.hasHandModel = Boolean(handInstance);
-      this.hasPoseModel = Boolean(poseInstance);
-
-      if (this.handLandmarker || this.poseLandmarker) {
-        this.workerReady = true;
-        this.workerStatus = 'ready';
-        this.workerError = undefined;
-        console.log('[VisionManager] MediaPipe initialized directly in browser:', {
-          hasHandModel: this.hasHandModel,
-          hasPoseModel: this.hasPoseModel,
-        });
-      } else {
+      this.worker = new Worker('/vision-worker.js');
+      this.worker.onmessage = event => {
+        const message = event.data;
+        if (message.type === 'init_complete') {
+          this.workerReady = Boolean(message.success);
+          this.workerStatus = message.success ? 'ready' : 'error';
+          this.workerError = message.error;
+          this.hasHandModel = Boolean(message.hasHandModel);
+          this.hasPoseModel = Boolean(message.hasPoseModel);
+          this.emitStatusFrame();
+          return;
+        }
+        if (message.type === 'landmarks') {
+          const data = message.data;
+          this.handleOutput(data.hands || [], data.pose || null, data.timestamp, data.inferenceMs);
+          this.isProcessingFrame = false;
+        }
+      };
+      this.worker.onerror = event => {
+        this.isProcessingFrame = false;
         this.workerReady = false;
         this.workerStatus = 'error';
-        this.workerError = 'Could not initialize MediaPipe vision models.';
-      }
-      this.emitStatusFrame();
+        this.workerError = event.message || 'Vision worker failed.';
+        this.emitStatusFrame();
+      };
+      this.worker.postMessage({ type: 'init' });
     } catch (err) {
       console.error('[VisionManager] MediaPipe initialization error:', err);
       this.workerReady = false;
@@ -239,7 +173,7 @@ export class VisionManager {
   }
 
   private startLoop(): void {
-    const targetIntervalMs = 1000 / 24; // Cap at 24 FPS
+    const targetIntervalMs = 1000 / 30; // Hand tracking cap; pose runs at 15 FPS in the worker.
 
     const loop = (now: number) => {
       this.animFrameId = requestAnimationFrame(loop);
@@ -264,31 +198,22 @@ export class VisionManager {
 
       const frameTs = Math.max(this.lastFrameTs + 1, Math.floor(now));
       this.lastFrameTs = frameTs;
-      const startMs = performance.now();
-
-      let hands: Landmark3D[][] = [];
-      let pose: Landmark3D[] | null = null;
-
-      try {
-        if (this.handLandmarker && this.video) {
-          const res = this.handLandmarker.detectForVideo(this.video, frameTs);
-          if (res?.landmarks) {
-            hands = res.landmarks.map(h => mirrorLandmarks(h)).filter(Boolean) as Landmark3D[][];
+      createImageBitmap(this.video)
+        .then(imageBitmap => {
+          if (!this.worker || !this.workerReady) {
+            imageBitmap.close();
+            this.isProcessingFrame = false;
+            return;
           }
-        }
-        if (this.poseLandmarker && this.video) {
-          const res = this.poseLandmarker.detectForVideo(this.video, frameTs);
-          if (res?.landmarks?.[0]) {
-            pose = mirrorLandmarks(res.landmarks[0]);
-          }
-        }
-      } catch (err) {
-        console.warn('[VisionManager] detectForVideo warning:', err);
-      }
-
-      const inferenceMs = performance.now() - startMs;
-      this.handleOutput(hands, pose, frameTs, inferenceMs);
-      this.isProcessingFrame = false;
+          this.worker.postMessage(
+            { type: 'process_frame', data: { imageBitmap, timestamp: frameTs } },
+            [imageBitmap]
+          );
+        })
+        .catch(err => {
+          console.warn('[VisionManager] Could not capture video frame:', err);
+          this.isProcessingFrame = false;
+        });
     };
 
     this.animFrameId = requestAnimationFrame(loop);
@@ -318,8 +243,8 @@ export class VisionManager {
     const isTrackingLost = this.lastTrackedAt === 0 || now - this.lastTrackedAt > 350;
 
     // Diagnostic checks: ambient brightness
-    let isLowLight = false;
-    if (this.sampleCtx && this.video && this.video.videoWidth > 0) {
+    if (now - this.lastBrightnessCheck > 1000 && this.sampleCtx && this.video && this.video.videoWidth > 0) {
+      this.lastBrightnessCheck = now;
       try {
         this.sampleCtx.drawImage(this.video, 0, 0, 64, 48);
         const imgData = this.sampleCtx.getImageData(0, 0, 64, 48).data;
@@ -328,7 +253,7 @@ export class VisionManager {
           brightnessSum += (imgData[i] + imgData[i + 1] + imgData[i + 2]) / 3;
         }
         const avgBrightness = brightnessSum / (imgData.length / 4);
-        isLowLight = avgBrightness < 38;
+        this.cachedLowLight = avgBrightness < 38;
       } catch {
         // Ignore canvas security errors
       }
@@ -356,7 +281,7 @@ export class VisionManager {
     const diagnostics: VisionDiagnostics = {
       fps: Math.round(this.rollingFps),
       inferenceMs: Math.round(inferenceMs),
-      isLowLight,
+      isLowLight: this.cachedLowLight,
       isCroppedBody,
       isCroppedHands,
       isTrackingLost,
@@ -383,18 +308,8 @@ export class VisionManager {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
-    try {
-      (this.handLandmarker as any)?.close?.();
-    } catch {
-      // Ignore cleanup error
-    }
-    this.handLandmarker = null;
-    try {
-      (this.poseLandmarker as any)?.close?.();
-    } catch {
-      // Ignore cleanup error
-    }
-    this.poseLandmarker = null;
+    this.worker?.terminate();
+    this.worker = null;
     this.workerReady = false;
     if (this.stream) {
       for (const track of this.stream.getTracks()) {

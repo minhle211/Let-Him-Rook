@@ -108,6 +108,7 @@ declare module '@react-three/fiber' {
     children?: any;
     camera?: any;
     shadows?: boolean;
+    dpr?: number | [number, number];
     style?: any;
     gl?: any;
   }
