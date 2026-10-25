@@ -100,19 +100,20 @@ test('Chess Gestures: Pick, hover, and release executes legal move; Open Palm ca
     e4: [],
   };
 
-  // Mock hand pointing at e2 (y = 0.75 maps to rank 2 for White)
-  const mockHand: Landmark3D[] = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.75, z: 0 }));
-  mockHand[0] = { x: 0.5, y: 0.9, z: 0 };
-  mockHand[5] = { x: 0.5, y: 0.7, z: 0 };
-  mockHand[8] = { x: 0.5, y: 0.75, z: 0 }; // Index tip
+  // Mock hand whose pinch point (thumb–index midpoint) is on e2 (x = 0.53, y = 0.75 for White)
+  const mockHand: Landmark3D[] = Array.from({ length: 21 }, () => ({ x: 0.53, y: 0.75, z: 0 }));
+  mockHand[0] = { x: 0.53, y: 0.9, z: 0 };
+  mockHand[5] = { x: 0.53, y: 0.7, z: 0 };
 
-  // 1. Arm with open pose (2 frames for median)
-  mockHand[4] = { x: 0.3, y: 0.75, z: 0 }; // Thumb far away
+  // 1. Arm with open pose (2 frames for median): thumb and index apart, centered on e2
+  mockHand[4] = { x: 0.47, y: 0.75, z: 0 }; // Thumb tip
+  mockHand[8] = { x: 0.59, y: 0.75, z: 0 }; // Index tip
   controller.update(mockHand, 'w', legalMoves as any, DEFAULT_CALIBRATION, 950);
   controller.update(mockHand, 'w', legalMoves as any, DEFAULT_CALIBRATION, 1000);
 
-  // 2. Pinch at e2 (thumb and index touch, 2 frames for median)
-  mockHand[4] = { x: 0.5, y: 0.75, z: 0 };
+  // 2. Pinch at e2 (thumb and index meet in the middle, 2 frames for median)
+  mockHand[4] = { x: 0.53, y: 0.75, z: 0 };
+  mockHand[8] = { x: 0.53, y: 0.75, z: 0 };
   controller.update(mockHand, 'w', legalMoves as any, DEFAULT_CALIBRATION, 1040);
   controller.update(mockHand, 'w', legalMoves as any, DEFAULT_CALIBRATION, 1080);
   assert.equal(controller.selectedSquare, 'e2');
