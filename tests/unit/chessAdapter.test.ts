@@ -57,6 +57,17 @@ test('Chess Engine: en passant capture is recognized and legal', () => {
   assert.equal(validateMove(fen, 'e5', 'd6'), true);
 });
 
+test('Chess Engine: invalid en passant target rank for active turn does not allow illegal diagonal pawn moves', () => {
+  // White moved d2->d4 (ep target d3). In sandbox, turn is toggled back to White without clearing d3.
+  const invalidFen = 'rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq d3 0 1';
+  const legal = getLegalMoves(invalidFen);
+  // c2 and e2 pawns must NOT be able to move diagonally to d3
+  assert.deepEqual(legal.c2, ['c3', 'c4']);
+  assert.deepEqual(legal.e2, ['e3', 'e4']);
+  assert.equal(validateMove(invalidFen, 'e2', 'd3'), false);
+  assert.equal(validateMove(invalidFen, 'c2', 'd3'), false);
+});
+
 test('Chess Engine: all 4 promotion choices are validated', () => {
   const promoFen = '8/4P3/8/8/8/8/8/4K2k w - - 0 1';
   assert.equal(validateMove(promoFen, 'e7', 'e8', 'queen'), true);
