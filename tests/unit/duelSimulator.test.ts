@@ -421,10 +421,11 @@ test('Duel Simulator: King summons 1-HP ally that approaches and attacks enemy',
   assert.equal(duel.allies.length, 1);
   assert.equal(duel.allies[0].hp, 1);
 
-  // Cannot summon second ally while first is active
-  const secondRes = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 7500);
-  assert.equal(secondRes.accepted, false);
-  assert.equal(secondRes.reason, 'max_allies_active');
+  // A second summon only waits for the cooldown, not for the first ally to die
+  const tooSoon = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 2000);
+  assert.equal(tooSoon.accepted, false);
+  assert.equal(tooSoon.reason, 'cooldown');
+  duel.allies = duel.allies.slice(0, 1); // keep the scenario below to one ally
 
   // Step simulation for 2.5 seconds: ally approaches and attacks enemy
   const enemyHpBefore = duel.defender.hp;
@@ -511,4 +512,60 @@ test('Duel Simulator: Manual rotation and aim-relative movement integration', ()
   const proj = duel.projectiles[0];
   assert.ok(proj.vx > 9.0, 'Rook shot should travel along facingRad direction');
   assert.ok(Math.abs(proj.vz) < 0.1);
+});
+
+const kingVsPawn = () =>
+  createDuel(
+    DUMMY_FEN,
+    { from: 'e1' as const, to: 'e8' as const, attackerColor: 'w' as const, attackerClass: 'king' as const, defenderClass: 'pawn' as const },
+    1000
+  );
+const SUMMON_CD = CLASS_ABILITY_CONFIG.king.summon.cooldownMs;
+
+test('Duel Simulator: King summons stack (no waiting for the previous ally to die), each with 1 HP', () => {
+  const duel = kingVsPawn();
+  for (let i = 0; i < 3; i++) {
+    const res = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + i * SUMMON_CD);
+    assert.equal(res.accepted, true, `summon ${i + 1}`);
+  }
+  assert.equal(duel.allies.length, 3, 'three allies alive at once');
+  assert.ok(duel.allies.every(a => a.hp === 1 && a.owner === 'w'));
+  assert.equal(duel.attacker.summonsUsed, 3);
+  const spots = new Set(duel.allies.map(a => `${a.x.toFixed(2)},${a.z.toFixed(2)}`));
+  assert.equal(spots.size, 3, 'stacked allies spawn in different spots');
+});
+
+test('Duel Simulator: King is capped at 10 summons per duel', () => {
+  const duel = kingVsPawn();
+  for (let i = 0; i < 10; i++) {
+    assert.equal(applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + i * SUMMON_CD).accepted, true, `summon ${i + 1}`);
+  }
+  const eleventh = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + 10 * SUMMON_CD);
+  assert.equal(eleventh.accepted, false);
+  assert.equal(eleventh.reason, 'summon_limit_reached');
+  assert.equal(duel.attacker.summonsUsed, 10);
+  assert.equal(getDuelSnapshot(duel).attacker.summonsUsed, 10, 'count is visible to the HUD');
+});
+
+test("Duel Simulator: each summoned ally hits for 75% of its piece's damage", () => {
+  const base: Record<string, number> = {
+    pawn: CLASS_ABILITY_CONFIG.pawn.sweep.damage,
+    rook: CLASS_ABILITY_CONFIG.rook.shot.damage,
+    knight: CLASS_ABILITY_CONFIG.knight.cleave.damage,
+    bishop: CLASS_ABILITY_CONFIG.bishop.iceBolt.damage,
+    queen: CLASS_ABILITY_CONFIG.queen.volley.damagePerOrb * 3,
+  };
+  assert.equal(CLASS_ABILITY_CONFIG.king.summon.baseDamageMultiplier, 0.75);
+  const seen = new Set<string>();
+  for (let attempt = 0; attempt < 60 && seen.size < 5; attempt++) {
+    const duel = kingVsPawn();
+    applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000);
+    const ally = duel.allies[0];
+    const before = duel.defender.hp;
+    let t = 1000;
+    while (duel.defender.hp === before && t < 4000) stepDuel(duel, (t += 50));
+    assert.equal(before - duel.defender.hp, base[ally.pieceClass] * 0.75, `${ally.pieceClass} ally damage`);
+    seen.add(ally.pieceClass);
+  }
+  assert.equal(seen.size, 5, 'checked every summonable piece');
 });
