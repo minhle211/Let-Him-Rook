@@ -9,7 +9,13 @@
 import { HandLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
 import wasmLoaderPath from '@mediapipe/tasks-vision/vision_wasm_module_internal.js?url';
 import wasmBinaryPath from '@mediapipe/tasks-vision/vision_wasm_module_internal.wasm?url';
-import type { Landmark3D, VisionDelegate, VisionWorkerRequest, VisionWorkerResponse } from './visionTypes.ts';
+import type {
+  Landmark3D,
+  VisionDelegate,
+  VisionMode,
+  VisionWorkerRequest,
+  VisionWorkerResponse,
+} from './visionTypes.ts';
 
 const HAND_MODEL_PATH = '/mediapipe/hand_landmarker.task';
 const POSE_MODEL_PATH = '/mediapipe/pose_landmarker_lite.task';
@@ -18,8 +24,8 @@ const HAND_MODEL_CDN =
 const POSE_MODEL_CDN =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
 
-/** Sample ambient brightness every N frames (~0.5s at 24 FPS) instead of every frame. */
-const BRIGHTNESS_SAMPLE_EVERY = 12;
+/** Sample ambient brightness every N frames (~0.4s at 60 FPS) instead of every frame. */
+const BRIGHTNESS_SAMPLE_EVERY = 24;
 const LOW_LIGHT_THRESHOLD = 38;
 
 const ctx = self as unknown as {
@@ -35,10 +41,14 @@ interface LandmarkerSet {
 }
 
 let active: LandmarkerSet | null = null;
+let currentMode: VisionMode = 'duel_full';
 let lastTimestampMs = 0;
 let frameCount = 0;
 let isLowLight = false;
 let brightnessCtx: OffscreenCanvasRenderingContext2D | null = null;
+let cachedHands: Landmark3D[][] = [];
+let lastHandsAt = -Infinity;
+let rollingInferenceMs = 10;
 
 function post(message: VisionWorkerResponse): void {
   ctx.postMessage(message);
@@ -193,7 +203,8 @@ function sampleBrightness(frame: ImageBitmap): void {
   isLowLight = sum / (data.length / 4) < LOW_LIGHT_THRESHOLD;
 }
 
-function processFrame(frame: ImageBitmap, timestamp: number): void {
+function processFrame(frame: ImageBitmap, timestamp: number, mode?: VisionMode): void {
+  if (mode) currentMode = mode;
   const startMs = performance.now();
   let hands: Landmark3D[][] = [];
   let pose: Landmark3D[] | null = null;
@@ -201,22 +212,38 @@ function processFrame(frame: ImageBitmap, timestamp: number): void {
   // MediaPipe VIDEO mode requires strictly increasing integer timestamps.
   const frameTs = Math.max(lastTimestampMs + 1, Math.floor(timestamp));
   lastTimestampMs = frameTs;
+  const frameIdx = frameCount++;
 
   const set = active;
   try {
-    if (set?.hand) {
-      const res = set.hand.detectForVideo(frame, frameTs);
-      if (res?.landmarks) {
-        hands = res.landmarks.map(h => mirrorLandmarks(h)).filter(Boolean) as Landmark3D[][];
-      }
-    }
-    if (set?.pose) {
+    const runPose = currentMode !== 'chess' && Boolean(set?.pose);
+    const interleaveHands =
+      currentMode === 'duel_full' &&
+      rollingInferenceMs > 16 &&
+      frameIdx % 2 === 1 &&
+      frameTs - lastHandsAt < 60;
+    const runHands =
+      currentMode !== 'duel_pose_only' && Boolean(set?.hand) && !interleaveHands;
+
+    if (runPose && set?.pose) {
       const res = set.pose.detectForVideo(frame, frameTs);
       if (res?.landmarks?.[0]) {
         pose = mirrorLandmarks(res.landmarks[0]);
       }
     }
-    if (frameCount++ % BRIGHTNESS_SAMPLE_EVERY === 0) {
+
+    if (runHands && set?.hand) {
+      const res = set.hand.detectForVideo(frame, frameTs);
+      if (res?.landmarks) {
+        hands = res.landmarks.map(h => mirrorLandmarks(h)).filter(Boolean) as Landmark3D[][];
+      }
+      cachedHands = hands;
+      lastHandsAt = frameTs;
+    } else if (interleaveHands) {
+      hands = cachedHands;
+    }
+
+    if (frameIdx % BRIGHTNESS_SAMPLE_EVERY === 0) {
       sampleBrightness(frame);
     }
   } catch (err) {
@@ -226,6 +253,10 @@ function processFrame(frame: ImageBitmap, timestamp: number): void {
   }
 
   const inferenceMs = performance.now() - startMs;
+  if (currentMode === 'duel_full') {
+    rollingInferenceMs = rollingInferenceMs * 0.8 + inferenceMs * 0.2;
+  }
+
   post({
     type: 'landmarks',
     hands,
@@ -241,8 +272,10 @@ ctx.onmessage = event => {
   const msg = event.data;
   if (msg.type === 'init') {
     void init(msg.delegate);
+  } else if (msg.type === 'set_mode') {
+    currentMode = msg.mode;
   } else if (msg.type === 'frame') {
-    processFrame(msg.frame, msg.timestamp);
+    processFrame(msg.frame, msg.timestamp, msg.mode);
   } else if (msg.type === 'close') {
     active?.hand?.close();
     active?.pose?.close();

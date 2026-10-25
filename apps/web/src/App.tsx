@@ -87,6 +87,12 @@ export const App: React.FC = () => {
   const keysPressedRef = useRef<Set<string>>(new Set());
   const cameraTelemetryRef = useRef<CameraTurnIntent>(cameraTelemetry);
   cameraTelemetryRef.current = cameraTelemetry;
+  const lastMoveSentRef = useRef<{
+    moveX: number;
+    moveZ: number;
+    turnDir: number;
+    sentAt: number;
+  }>({ moveX: 0, moveZ: 0, turnDir: 0, sentAt: 0 });
 
   const actionCounterRef = useRef(0);
   const actionPrefixRef = useRef(crypto.randomUUID());
@@ -162,7 +168,21 @@ export const App: React.FC = () => {
     torsoLeanRef.current.reset();
     leftCameraRef.current.reset();
     combatDetectorRef.current.reset();
+    matchStore.setLocalMoveIntent(0, 0, 0);
   }, [calibrationProfile, matchState.snapshot?.phase, showCalibration]);
+
+  // Switch VisionMode based on match phase and calibration / sandbox state
+  useEffect(() => {
+    const vm = visionManagerRef.current;
+    if (!vm) return;
+    const phase = matchState.snapshot?.phase;
+    const mode = matchState.snapshot?.mode;
+    if (showCalibration || mode === 'sandbox' || phase !== 'chess_turn') {
+      vm.setVisionMode('duel_full');
+    } else {
+      vm.setVisionMode('chess');
+    }
+  }, [matchState.snapshot?.phase, matchState.snapshot?.mode, showCalibration]);
 
   const isInRoom = Boolean(matchState.snapshot?.roomId || showCalibration);
 
@@ -266,13 +286,30 @@ export const App: React.FC = () => {
 
           // Only send camera torso-lean & turn if no keyboard WASD/QE keys are currently held
           if (keysPressedRef.current.size === 0) {
-            wsClientRef.current?.send({
-              type: 'duel_move_intent',
-              moveX: lean.moveX,
-              moveZ: lean.moveZ,
-              turnDir: camTurn.turnDir,
-              actionId: `${actionPrefixRef.current}_lean_${Math.round(now)}`,
-            });
+            matchStore.setLocalMoveIntent(lean.moveX, lean.moveZ, camTurn.turnDir);
+
+            const lastSent = lastMoveSentRef.current;
+            const changed =
+              lean.moveX !== lastSent.moveX ||
+              lean.moveZ !== lastSent.moveZ ||
+              camTurn.turnDir !== lastSent.turnDir;
+            const heartbeatDue = now - lastSent.sentAt >= 50;
+
+            if (changed || heartbeatDue) {
+              lastMoveSentRef.current = {
+                moveX: lean.moveX,
+                moveZ: lean.moveZ,
+                turnDir: camTurn.turnDir,
+                sentAt: now,
+              };
+              wsClientRef.current?.send({
+                type: 'duel_move_intent',
+                moveX: lean.moveX,
+                moveZ: lean.moveZ,
+                turnDir: camTurn.turnDir,
+                actionId: `${actionPrefixRef.current}_lean_${Math.round(now)}`,
+              });
+            }
           }
         }
 
@@ -335,6 +372,14 @@ export const App: React.FC = () => {
       if (turnDir === 0 && cameraTelemetryRef.current.turnDir !== 0) {
         turnDir = cameraTelemetryRef.current.turnDir;
       }
+
+      matchStore.setLocalMoveIntent(moveX, moveZ, turnDir);
+      lastMoveSentRef.current = {
+        moveX,
+        moveZ,
+        turnDir,
+        sentAt: performance.now(),
+      };
 
       wsClientRef.current?.send({
         type: 'duel_move_intent',
@@ -415,11 +460,15 @@ export const App: React.FC = () => {
       if (keysPressedRef.current.size > 0) {
         sendKeyboardMove();
       }
-    }, 80);
+    }, 50);
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    const clearKeys = () => { keysPressedRef.current.clear(); setUsingKeyboard(false); };
+    const clearKeys = () => {
+      keysPressedRef.current.clear();
+      setUsingKeyboard(false);
+      matchStore.setLocalMoveIntent(0, 0, 0);
+    };
     window.addEventListener('blur', clearKeys);
     return () => {
       clearInterval(intervalId);
@@ -433,6 +482,7 @@ export const App: React.FC = () => {
     if (matchState.snapshot?.paused) {
       keysPressedRef.current.clear();
       setUsingKeyboard(false);
+      matchStore.setLocalMoveIntent(0, 0, 0);
       torsoLeanRef.current.reset();
       leftCameraRef.current.reset();
       combatDetectorRef.current = new CombatGestureDetector();

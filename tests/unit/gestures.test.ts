@@ -139,31 +139,29 @@ test('Combat Gesture Detector: Rook extended arm trigger and WAIT_RELEASE re-arm
   // Arm bent: no trigger
   assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1000), null);
 
-  // Fully extend right arm forward
+  // Fully extend right arm forward (triggers on 2nd frame)
   mockPose[14] = { x: 0.5, y: 0.75, z: 0 };
   mockPose[16] = { x: 0.5, y: 1.0, z: 0 }; // Fully extended
 
-  detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1040);
-  detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1080);
-  const shot = detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1120);
+  assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1040), null);
+  const shot = detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1080);
   assert.ok(shot);
   assert.equal(shot.ability, 'rook_shot');
 
   // Holding extended arm does NOT spam shots: requires dropping arm (WAIT_RELEASE)
+  assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1120), null);
   assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1160), null);
-  assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1200), null);
 
   // Drop arm to neutral
   mockPose[14] = { x: 0.3, y: 0.6, z: 0 };
   mockPose[16] = { x: 0.5, y: 0.55, z: 0 };
   detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1250);
 
-  // Extend again: fires 2nd shot!
+  // Extend again: fires 2nd shot on 2nd frame!
   mockPose[14] = { x: 0.5, y: 0.75, z: 0 };
   mockPose[16] = { x: 0.5, y: 1.0, z: 0 };
-  detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1300);
-  detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1340);
-  const shot2 = detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1380);
+  assert.equal(detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1300), null);
+  const shot2 = detector.update('rook', mockPose, [], DEFAULT_CALIBRATION, 1340);
   assert.ok(shot2);
   assert.equal(shot2.ability, 'rook_shot');
 });
@@ -303,10 +301,9 @@ test('Combat Gesture Detector: Queen right open palm raised near shoulder trigge
   mockPose[16] = { x: 0.65, y: 0.48, z: 0 }; // Right wrist near shoulder (<= 0.5 + 0.10)
   const rightOpenPalm = createRightHandLandmarks(true, 0.65);
 
-  // Held raised with open palm for 3 frames
-  detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1000);
-  detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1040);
-  const volley = detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1080);
+  // Held raised with open palm for 2 frames
+  assert.equal(detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1000), null);
+  const volley = detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1040);
   assert.ok(volley);
   assert.equal(volley.ability, 'queen_volley');
 
@@ -317,16 +314,15 @@ test('Combat Gesture Detector: Queen right open palm raised near shoulder trigge
   mockPose[16] = { x: 0.65, y: 0.70, z: 0 };
   detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1200);
 
-  // Raise again for 3 frames: fires 2nd volley
+  // Raise again for 2 frames: fires 2nd volley
   mockPose[16] = { x: 0.65, y: 0.48, z: 0 };
-  detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1250);
-  detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1290);
-  const volley2 = detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1330);
+  assert.equal(detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1250), null);
+  const volley2 = detector.update('queen', mockPose, [rightOpenPalm], DEFAULT_CALIBRATION, 1290);
   assert.ok(volley2);
   assert.equal(volley2.ability, 'queen_volley');
 });
 
-test('Combat Gesture Detector: King closed right fist at chest center held for 400ms triggers summon', () => {
+test('Combat Gesture Detector: King closed right fist at chest center held for 220ms triggers summon', () => {
   const detector = new CombatGestureDetector();
   const mockPose: Landmark3D[] = Array.from({ length: 20 }, () => ({ x: 0, y: 0, z: 0 }));
   mockPose[11] = { x: 0.4, y: 0.5, z: 0 }; // Left shoulder
@@ -335,12 +331,12 @@ test('Combat Gesture Detector: King closed right fist at chest center held for 4
   mockPose[16] = { x: 0.51, y: 0.55, z: 0 }; // Right wrist at chest (dist ≈ 0.014 < 0.15)
   const rightFist = createRightHandLandmarks(false, 0.51);
 
-  // Held for 200ms: not yet ready
+  // Held for 150ms (< 220ms): not yet ready
   assert.equal(detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1000), null);
-  assert.equal(detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1200), null);
+  assert.equal(detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1150), null);
 
-  // Held for 450ms: triggers summon!
-  const summon = detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1450);
+  // Held for >= 220ms: triggers summon!
+  const summon = detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1250);
   assert.ok(summon);
   assert.equal(summon.ability, 'king_summon');
 
@@ -348,10 +344,10 @@ test('Combat Gesture Detector: King closed right fist at chest center held for 4
   mockPose[16] = { x: 0.8, y: 0.55, z: 0 };
   detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1500);
 
-  // Move back to chest and hold 400ms
+  // Move back to chest and hold >= 220ms
   mockPose[16] = { x: 0.51, y: 0.55, z: 0 };
   detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1550);
-  const summon2 = detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 2000);
+  const summon2 = detector.update('king', mockPose, [rightFist], DEFAULT_CALIBRATION, 1800);
   assert.ok(summon2);
   assert.equal(summon2.ability, 'king_summon');
 });

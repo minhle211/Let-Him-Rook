@@ -42,6 +42,12 @@ export interface MatchState {
   feedbackToast: { message: string; isError: boolean; timestamp: number } | null;
   aiAdvice: string | null;
   interpolation: InterpolationState;
+  localMoveIntent: {
+    moveX: number;
+    moveZ: number;
+    turnDir: number;
+    updatedAt: number;
+  };
   visualEffects: VisualDuelEffect[];
 }
 
@@ -66,6 +72,12 @@ class MatchStoreManager {
       prevReceivedAt: 0,
       targetReceivedAt: 0,
     },
+    localMoveIntent: {
+      moveX: 0,
+      moveZ: 0,
+      turnDir: 0,
+      updatedAt: 0,
+    },
     visualEffects: [],
   };
 
@@ -85,6 +97,15 @@ class MatchStoreManager {
     for (const l of this.listeners) {
       l(this.state);
     }
+  }
+
+  public setLocalMoveIntent(moveX: number, moveZ: number, turnDir: number): void {
+    this.state.localMoveIntent = {
+      moveX,
+      moveZ,
+      turnDir,
+      updatedAt: performance.now(),
+    };
   }
 
   public setSession(localColor: PlayerColor, token: string): void {
@@ -113,6 +134,12 @@ class MatchStoreManager {
         prevReceivedAt: 0,
         targetReceivedAt: 0,
       },
+      localMoveIntent: {
+        moveX: 0,
+        moveZ: 0,
+        turnDir: 0,
+        updatedAt: 0,
+      },
       visualEffects: [],
     };
     this.emit();
@@ -132,7 +159,7 @@ class MatchStoreManager {
       now - oldReceivedAt < 180;
 
     const prevDuel = isContinuityValid ? oldTarget : nextDuel;
-    const prevReceivedAt = isContinuityValid ? oldReceivedAt : now - 50;
+    const prevReceivedAt = isContinuityValid ? oldReceivedAt : now - 16.7;
 
     // Prune visual effects older than 1.2s
     const activeEffects = this.state.visualEffects.filter(e => now - e.createdAt < 1200);

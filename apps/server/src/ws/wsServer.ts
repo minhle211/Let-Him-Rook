@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  SERVER_TICK_MS,
   parseClientMessage,
   type ClientMessage,
   type PlayerColor,
@@ -194,7 +195,7 @@ export class RookServer {
         const actualPort = typeof addr === 'object' && addr ? addr.port : port;
         this.tickInterval = setInterval(() => {
           this.roomManager.tick();
-        }, 50);
+        }, Math.round(SERVER_TICK_MS));
         this.tickInterval.unref();
         resolve(actualPort);
       });
