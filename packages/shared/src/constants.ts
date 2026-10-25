@@ -100,12 +100,12 @@ export const CLASS_ABILITY_CONFIG = {
   king: {
     summon: {
       cooldownMs: 6000,
-      maxAllies: 1,
+      maxSummonsPerDuel: 10, // summons stack (no wait for the previous ally to die); 10 per duel
       allyHp: 1,
       durationMs: 12000,
       attackIntervalMs: 2000,
       speed: 2.2,
-      baseDamageMultiplier: 0.5,
+      baseDamageMultiplier: 0.75, // ally hits for 75% of its piece's normal damage
     },
   },
 } as const;

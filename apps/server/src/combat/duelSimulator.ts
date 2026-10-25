@@ -134,6 +134,7 @@ export function createDuel(
     teleportWindupRemainingMs: 0,
     cooldowns: { primary: 0, secondary: 0 },
     rookShotCounter: 0,
+    summonsUsed: 0,
   };
 
   const defender: FighterState = {
@@ -154,6 +155,7 @@ export function createDuel(
     teleportWindupRemainingMs: 0,
     cooldowns: { primary: 0, secondary: 0 },
     rookShotCounter: 0,
+    summonsUsed: 0,
   };
 
   // Build obstacles from non-dueling board pieces outside SPAWN_CLEAR_RADIUS
@@ -559,17 +561,21 @@ export function applyAbilityIntent(
       if (now < fighter.cooldowns.primary) {
         return { accepted: false, reason: 'cooldown' };
       }
-      if (duel.allies.some(a => a.owner === fighter.color)) {
-        return { accepted: false, reason: 'max_allies_active' };
+      // Summons stack (a new ally doesn't wait for the previous one to die), up to 10 per duel.
+      if (fighter.summonsUsed >= CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel) {
+        return { accepted: false, reason: 'summon_limit_reached' };
       }
 
       fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.king.summon.cooldownMs;
+      const summonIndex = fighter.summonsUsed++;
 
       const classes: PieceClass[] = ['pawn', 'rook', 'knight', 'bishop', 'queen'];
       const randomClass = classes[Math.floor(Math.random() * classes.length)];
 
-      // Spawn ally slightly to the side of King
-      const sideAngle = fighter.facingRad + Math.PI / 2;
+      // Spawn beside the King, alternating sides and fanning out so stacked allies don't overlap
+      const side = summonIndex % 2 === 0 ? 1 : -1;
+      const fan = Math.floor(summonIndex / 2) * 0.35;
+      const sideAngle = fighter.facingRad + side * (Math.PI / 2 - fan);
       const spawnX = fighter.x + Math.sin(sideAngle) * 1.5;
       const spawnZ = fighter.z - Math.cos(sideAngle) * 1.5;
       const clamped = clampToTabletop(spawnX, spawnZ, FIGHTER_RADIUS);
@@ -798,7 +804,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
       ally.z = clamped.z;
     }
 
-    // Ally attacks every 2.0s for 50% base damage
+    // Ally attacks every 2.0s for 75% of its piece's normal damage
     if (now >= ally.nextAttackMs) {
       ally.nextAttackMs = now + CLASS_ABILITY_CONFIG.king.summon.attackIntervalMs;
       const baseDmg =
