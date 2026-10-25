@@ -102,7 +102,7 @@ test('Duel Simulator: Tracking loss > 300ms stops movement velocity', () => {
   assert.equal(duel.attacker.vz, 0);
 });
 
-test('Duel Simulator: 90s timeout favors higher HP, equal HP draws', () => {
+test('Duel Simulator: 60s timeout favors higher HP, equal HP draws', () => {
   const pending = {
     from: 'e4' as const,
     to: 'e5' as const,

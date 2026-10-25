@@ -104,7 +104,7 @@ When you join a room, the **Vision & Gesture Calibration** overlay opens with a 
   - **Defender Wins**: The attacking piece is **destroyed and removed from its origin square**, the defending piece survives on its square, castling rights update accurately if a home-square Rook was lost, and the turn passes to the defender's side.
   - **King Duel Rule**: Kings are never captured without a fight, but if a King initiates a capture duel and loses, that King's side immediately loses the match (`king_duel_lost`).
   - **Discovered-Check King Safety Rule**: If an attacking piece loses a duel and its removal exposes its own King to a discovered attack as the turn passes to the defender, the defender immediately wins the match (`king_exposed_after_failed_capture`).
-  - **Duel Timeout (90s)**: Higher remaining HP wins the duel; exact equal HP ends the match in a draw (`duel_timeout_tie`).
+  - **Duel Timeout (60s)**: Higher remaining HP wins the duel; exact equal HP ends the match in a draw (`duel_timeout_tie`).
 
 ---
 

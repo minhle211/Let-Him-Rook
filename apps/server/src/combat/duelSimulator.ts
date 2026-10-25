@@ -1282,7 +1282,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
 
   duel.allies = duel.allies.filter((a) => a.hp > 0);
 
-  // 7. Check duel termination (0 HP or 90s timer)
+  // 7. Check duel termination (0 HP or 60s timer)
   if (duel.attacker.hp <= 0 && duel.defender.hp <= 0) {
     duel.winner = 'draw';
     duel.resolutionReason = 'mutual_knockout';
@@ -1296,7 +1296,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
     duel.resolutionReason = 'knockout';
     duel.isFinished = true;
   } else if (now - duel.startedAt >= DUEL_DURATION_MS) {
-    // 90-second timeout
+    // 60-second timeout
     if (duel.attacker.hp > duel.defender.hp) {
       duel.winner = duel.attacker.color;
       duel.resolutionReason = 'timeout_higher_hp';
