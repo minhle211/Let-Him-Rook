@@ -15,6 +15,8 @@ import {
   type ServerMessage,
 } from '@let-him-rook/shared';
 import { RoomManager, type Room, type WebSocketSession } from '../rooms/roomManager.ts';
+import type { AiProvider } from '../match/aiAdvisor.ts';
+import { createAiProviderFromEnv, MetaAiProvider } from '../match/metaAiProvider.ts';
 
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -196,6 +198,12 @@ export function getLanAddresses(): string[] {
 export interface RookServerOptions {
   /** Serve over HTTPS/WSS (needed for guest webcams on the LAN). */
   tls?: { cert: string; key: string };
+  /**
+   * AI advice provider. When omitted, one is built from the environment
+   * (META_API_KEY — see match/metaAiProvider.ts); pass null to disable
+   * live AI explicitly and always use the built-in template advice.
+   */
+  aiProvider?: AiProvider | null;
 }
 
 export class RookServer {
@@ -210,6 +218,18 @@ export class RookServer {
 
   constructor(options: RookServerOptions = {}) {
     this.roomManager = new RoomManager();
+    const aiProvider =
+      options.aiProvider !== undefined ? options.aiProvider : createAiProviderFromEnv();
+    this.roomManager.setAiProvider(aiProvider);
+    if (aiProvider) {
+      console.log(
+        aiProvider instanceof MetaAiProvider
+          ? `AI advice: live provider enabled (${aiProvider.model} via ${aiProvider.baseUrl}).`
+          : 'AI advice: live provider enabled (custom provider).'
+      );
+    } else {
+      console.log('AI advice: no META_API_KEY configured — using built-in template advice.');
+    }
     this.secure = Boolean(options.tls);
     const handler = (req: IncomingMessage, res: ServerResponse) => this.handleHttp(req, res);
     this.server = options.tls
