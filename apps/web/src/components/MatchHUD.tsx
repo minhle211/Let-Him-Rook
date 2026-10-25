@@ -44,32 +44,32 @@ interface MatchHUDProps {
 const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; primaryAbility: AbilityType }> = {
   pawn: {
     title: '♙ PAWN',
-    gesture: 'Stationary open right palm to Parry • Rapid right wrist sweep to Slash (18 dmg)',
+    gesture: 'Stationary open right palm to Parry • Rapid right wrist sweep to Slash',
     primaryAbility: 'pawn_sweep',
   },
   rook: {
     title: '♖ ROOK',
-    gesture: 'Extend right arm forward to fire Cannon Shot (16 dmg; every 3rd shot is 28 dmg AoE Bomb)',
+    gesture: 'Extend right arm forward to fire Cannon Shot; every 3rd shot is an AoE Bomb',
     primaryAbility: 'rook_shot',
   },
   knight: {
     title: '♘ KNIGHT',
-    gesture: 'Raise right hand above shoulder and chop down to Cleave (24 dmg)',
+    gesture: 'Raise right hand above shoulder and chop down to Cleave',
     primaryAbility: 'knight_cleave',
   },
   bishop: {
     title: '♗ BISHOP',
-    gesture: 'Cock right hand near shoulder then thrust forward for Ice Bolt (14 dmg + 4s Chill/Freeze)',
+    gesture: 'Cock right hand near shoulder then thrust forward for Ice Bolt (4s Chill/Freeze)',
     primaryAbility: 'bishop_ice_bolt',
   },
   queen: {
     title: '♕ QUEEN',
-    gesture: 'Raise right open palm to shoulder height for 3-Orb Homing Volley (27 dmg)',
+    gesture: 'Raise right open palm to shoulder height for 3-Orb Homing Volley',
     primaryAbility: 'queen_volley',
   },
   king: {
     title: '♔ KING',
-    gesture: 'Hold closed right fist at chest center for 0.4s to Summon a random 1-HP Ally (75% damage, stacks, 10 per duel)',
+    gesture: 'Hold closed right fist at chest center for 0.4s to Summon a random 1-HP Ally (stacks, 10 per duel)',
     primaryAbility: 'king_summon',
   },
 };
@@ -109,10 +109,24 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
     }
   });
   const [hiddenAdvice, setHiddenAdvice] = useState<string | null>(null);
+  const duelCardRef = useRef<HTMLDivElement | null>(null);
+  const [duelCardHeight, setDuelCardHeight] = useState(0);
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [clockNow, setClockNow] = useState(Date.now());
+  useEffect(() => {
+    const node = duelCardRef.current;
+    if (!node) {
+      setDuelCardHeight(0);
+      return;
+    }
+    const measure = () => setDuelCardHeight(node.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  });
   useEffect(() => {
     if (!snapshot?.paused) return;
     const timer = window.setInterval(() => setClockNow(Date.now()), 250);
@@ -519,10 +533,17 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             <span>
               {snapshot.turn === 'w' ? 'White' : 'Black'}'s Turn{' '}
               {isMyTurn ? '(YOUR MOVE)' : '(WAITING)'}
+              {duel ? `  ⏳ ${Math.ceil(duel.remainingMs / 1000)}s` : ''}
             </span>
           )}
           {snapshot.phase === 'duel_intro' && '⚡ CONTESTED DUEL INCOMING ⚡'}
-          {snapshot.phase === 'active_duel' && '⚔️ SPELL DUEL IN PROGRESS ⚔️'}
+          {snapshot.phase === 'active_duel' && (
+            <span>
+              {snapshot.turn === 'w' ? 'White' : 'Black'}'s Turn{' '}
+              {isMyTurn ? '(YOUR MOVE)' : '(WAITING)'}
+              {duel ? `  ⏳ ${Math.ceil(duel.remainingMs / 1000)}s` : ''}
+            </span>
+          )}
           {snapshot.phase === 'duel_result' && '🏆 DUEL RESOLVED'}
           {snapshot.phase === 'match_over' &&
             `👑 MATCH OVER — WINNER: ${
@@ -685,12 +706,17 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
         {/* Duel Health & Ability Bars */}
         {isDuel && duel && (
           <div
+            ref={duelCardRef}
             style={{
-              width: '100%',
-              maxWidth: 680,
+              position: 'fixed',
+              top: 84,
+              left: 16,
+              width: 300,
+              boxSizing: 'border-box',
+              zIndex: 43,
               backgroundColor: 'rgba(23, 27, 44, 0.94)',
               borderRadius: 16,
-              padding: '0.9rem 1.2rem',
+              padding: '0.7rem 0.8rem',
               border: '1px solid #3b82f6',
               boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
               display: 'flex',
@@ -699,29 +725,13 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
               pointerEvents: 'auto',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#93c5fd' }}>
-                {localGuide ? `${localGuide.title}: ${localGuide.gesture}` : ''}
-              </span>
-              <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: cameraTurn?.turnDir ? '#38bdf8' : cameraTurn?.active ? '#4ade80' : '#94a3b8' }}>
-                  {!cameraTurn || !cameraTurn.active
-                    ? '✋ 5 FINGERS OPEN TO AIM'
-                    : cameraTurn.turnDir === -1
-                    ? '⟲ AIM LEFT'
-                    : cameraTurn.turnDir === 1
-                    ? '⟳ AIM RIGHT'
-                    : '• AIM NEUTRAL'}
-                </span>
-                <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f59e0b', whiteSpace: 'nowrap' }}>
-                  ⏳ {Math.ceil(duel.remainingMs / 1000)}s
-                </span>
-              </div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#93c5fd', lineHeight: 1.35 }}>
+              {localGuide ? `${localGuide.title}: ${localGuide.gesture}` : ''}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
               {/* Attacker */}
-              <div>
+              <div style={{ order: duel.attacker.color === localColor ? 0 : 1 }}>
                 <div
                   style={{
                     display: 'flex',
@@ -810,7 +820,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
               </div>
 
               {/* Defender */}
-              <div>
+              <div style={{ order: duel.defender.color === localColor ? 0 : 1 }}>
                 <div
                   style={{
                     display: 'flex',
@@ -1044,9 +1054,10 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
         <aside
           style={{
             position: 'fixed',
-            top: 84,
+            top: 84 + (duelCardHeight > 0 ? duelCardHeight + 8 : 0),
             left: 16,
             width: 300,
+            boxSizing: 'border-box',
             maxHeight: 'min(420px, calc(100vh - 280px))',
             overflow: 'auto',
             zIndex: 42,
