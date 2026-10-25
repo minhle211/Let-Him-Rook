@@ -75,6 +75,7 @@ export interface FighterState {
   x: number;
   z: number;
   facingRad: number;
+  turnRate: number;
   vx: number;
   vz: number;
   isParrying: boolean;

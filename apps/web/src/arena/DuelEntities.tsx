@@ -108,43 +108,41 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         }
       }
 
-      // 5. Stabilized 3D Duel Camera
+      // 5. Over-the-back 3D Duel Aim Camera
       if (isDuelActive && camera) {
         const localFighter =
           targetDuel.attacker.color === (localColor || 'w')
             ? targetDuel.attacker
             : targetDuel.defender;
-        const oppFighter =
-          targetDuel.attacker.color === (localColor || 'w')
-            ? targetDuel.defender
-            : targetDuel.attacker;
+        const prevLocal =
+          prevDuel &&
+          (targetDuel.attacker.color === (localColor || 'w') ? prevDuel.attacker : prevDuel.defender);
 
-        const toOppX = oppFighter.x - localFighter.x;
-        const toOppZ = oppFighter.z - localFighter.z;
-        const dist = Math.hypot(toOppX, toOppZ) || 1;
-        const oppDirX = toOppX / dist;
-        const oppDirZ = toOppZ / dist;
+        const fromRot = -(prevLocal?.facingRad ?? localFighter.facingRad);
+        const toRot = -localFighter.facingRad;
+        const curRotY = lerpAngle(fromRot, toRot, alpha);
+        const curFacingRad = -curRotY;
 
-        // Blend behind-fighter vector with stable table-side orientation so camera never whips 180° at close range
-        const sideZ = (localColor || 'w') === 'b' ? 1 : -1;
-        const blendX = oppDirX * 0.55;
-        const blendZ = oppDirZ * 0.55 + sideZ * 0.45;
-        const blendLen = Math.hypot(blendX, blendZ) || 1;
-        const camDirX = blendX / blendLen;
-        const camDirZ = blendZ / blendLen;
+        const forwardX = Math.sin(curFacingRad);
+        const forwardZ = -Math.cos(curFacingRad);
 
-        const targetCamX = Math.max(-9.5, Math.min(9.5, localFighter.x - camDirX * 5.2));
+        const fromX = prevLocal?.x ?? localFighter.x;
+        const fromZ = prevLocal?.z ?? localFighter.z;
+        const curFighterX = lerp(fromX, localFighter.x, alpha);
+        const curFighterZ = lerp(fromZ, localFighter.z, alpha);
+
+        const targetCamX = Math.max(-9.5, Math.min(9.5, curFighterX - forwardX * 5.2));
         const targetCamY = 4.1;
-        const targetCamZ = Math.max(-9.5, Math.min(9.5, localFighter.z - camDirZ * 5.2));
+        const targetCamZ = Math.max(-9.5, Math.min(9.5, curFighterZ - forwardZ * 5.2));
 
         const camSmooth = Math.min(1, delta * 4.5);
         camera.position.x = lerp(camera.position.x, targetCamX, camSmooth);
         camera.position.y = lerp(camera.position.y, targetCamY, camSmooth);
         camera.position.z = lerp(camera.position.z, targetCamZ, camSmooth);
 
-        const desiredLookX = localFighter.x * 0.4 + oppFighter.x * 0.6;
+        const desiredLookX = curFighterX + forwardX * 3.5;
         const desiredLookY = 0.75;
-        const desiredLookZ = localFighter.z * 0.4 + oppFighter.z * 0.6;
+        const desiredLookZ = curFighterZ + forwardZ * 3.5;
 
         lookTargetRef.current.x = lerp(lookTargetRef.current.x, desiredLookX, camSmooth);
         lookTargetRef.current.y = lerp(lookTargetRef.current.y, desiredLookY, camSmooth);

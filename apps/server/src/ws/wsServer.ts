@@ -264,10 +264,13 @@ export class RookServer {
             const ext = cleanPath.substring(cleanPath.lastIndexOf('.')).toLowerCase();
             const mime = mimeTypes[ext] || 'application/octet-stream';
             const content = await readFile(filePath);
+            // Vite's /assets/ files are content-hashed and the MediaPipe models are
+            // versioned by path, so the ~25 MB of Wasm + models can be cached long-term.
+            const immutable = cleanPath.startsWith('/assets/') || cleanPath.startsWith('/mediapipe/');
             res.writeHead(200, {
               'Content-Type': mime,
               'Content-Length': content.length,
-              'Cache-Control': 'no-cache',
+              'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
             });
             if (req.method === 'HEAD') {
               res.end();

@@ -1,53 +1,52 @@
-export interface Landmark3D {
-  x: number;
-  y: number;
-  z: number;
-  visibility?: number;
-}
+import type {
+  Landmark3D,
+  VisionDelegate,
+  VisionDiagnostics,
+  VisionFrameData,
+  VisionWorkerRequest,
+  VisionWorkerResponse,
+} from './visionTypes.ts';
 
-export interface VisionDiagnostics {
-  fps: number;
-  inferenceMs: number;
-  isLowLight: boolean;
-  isCroppedBody: boolean;
-  isCroppedHands: boolean;
-  isTrackingLost: boolean;
-  workerStatus?: 'loading' | 'ready' | 'error';
-  workerError?: string;
-  hasHandModel?: boolean;
-  hasPoseModel?: boolean;
-}
-
-export interface VisionFrameData {
-  hands: Landmark3D[][];
-  pose: Landmark3D[] | null;
-  timestamp: number;
-  diagnostics: VisionDiagnostics;
-}
+export type { Landmark3D, VisionDelegate, VisionDiagnostics, VisionFrameData } from './visionTypes.ts';
 
 export type VisionFrameCallback = (data: VisionFrameData) => void;
 
+export interface VisionManagerOptions {
+  /** Preferred inference backend; GPU falls back to CPU automatically. */
+  delegate?: VisionDelegate;
+}
+
+/** If the worker never answers a frame (e.g. GPU context loss), stop waiting after this long. */
+const FRAME_STALL_TIMEOUT_MS = 2000;
+
+/**
+ * Owns the webcam stream and feeds frames to the MediaPipe worker
+ * (vision.worker.ts). Inference runs off the main thread, so the render loop
+ * only pays for a non-blocking createImageBitmap + postMessage per frame.
+ */
 export class VisionManager {
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
   private worker: Worker | null = null;
+  private readonly preferredDelegate: VisionDelegate;
   private workerReady: boolean = false;
   private workerStatus: 'loading' | 'ready' | 'error' = 'loading';
   private workerError?: string;
   private hasHandModel: boolean = false;
   private hasPoseModel: boolean = false;
+  private delegate?: VisionDelegate;
   private animFrameId: number | null = null;
-  private isProcessingFrame: boolean = false;
+  private frameInFlight: boolean = false;
+  private frameSentAt: number = 0;
   private lastFrameTime: number = 0;
-  private lastFrameTs: number = 0;
   private lastOutputTime: number = 0;
   private lastTrackedAt: number = 0;
   private rollingFps: number = 24;
   private callbacks: Set<VisionFrameCallback> = new Set();
-  private sampleCanvas: HTMLCanvasElement | null = null;
-  private sampleCtx: CanvasRenderingContext2D | null = null;
-  private lastBrightnessCheck = 0;
-  private cachedLowLight = false;
+
+  constructor(options: VisionManagerOptions = {}) {
+    this.preferredDelegate = options.delegate ?? 'GPU';
+  }
 
   public subscribe(cb: VisionFrameCallback): () => void {
     this.callbacks.add(cb);
@@ -68,24 +67,30 @@ export class VisionManager {
     }
 
     this.video = videoElement;
-    this.sampleCanvas = document.createElement('canvas');
-    this.sampleCanvas.width = 64;
-    this.sampleCanvas.height = 48;
-    this.sampleCtx = this.sampleCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Start loading models in parallel with the camera permission prompt.
+    this.workerStatus = 'loading';
+    this.workerReady = false;
+    this.startWorker();
 
     // 1. Request webcam stream
     if (navigator.mediaDevices?.getUserMedia) {
       try {
-        this.stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 60, max: 60 },
             facingMode: 'user',
           },
           audio: false,
         });
-        this.video.srcObject = this.stream;
+        if (this.video !== videoElement) {
+          // stop() was called while the permission prompt was open.
+          for (const track of stream.getTracks()) track.stop();
+          return;
+        }
+        this.stream = stream;
+        this.video.srcObject = stream;
         await this.video.play().catch(err => {
           console.warn('[VisionManager] video.play() warning:', err);
         });
@@ -96,57 +101,80 @@ export class VisionManager {
             ? `Camera access error: ${camErr.message}`
             : 'Camera permission denied or camera in use.';
         console.error('[VisionManager] Camera getUserMedia failed:', camErr);
+        this.terminateWorker();
         this.emitStatusFrame();
         return;
       }
     } else {
       this.workerStatus = 'error';
       this.workerError = 'Camera API unavailable (requires localhost or HTTPS).';
+      this.terminateWorker();
       this.emitStatusFrame();
       return;
     }
 
-    // 2. Initialize MediaPipe in a worker so inference never blocks WebGL.
-    this.workerStatus = 'loading';
-    this.workerReady = false;
     this.emitStatusFrame();
-
-    try {
-      this.worker = new Worker('/vision-worker.js');
-      this.worker.onmessage = event => {
-        const message = event.data;
-        if (message.type === 'init_complete') {
-          this.workerReady = Boolean(message.success);
-          this.workerStatus = message.success ? 'ready' : 'error';
-          this.workerError = message.error;
-          this.hasHandModel = Boolean(message.hasHandModel);
-          this.hasPoseModel = Boolean(message.hasPoseModel);
-          this.emitStatusFrame();
-          return;
-        }
-        if (message.type === 'landmarks') {
-          const data = message.data;
-          this.handleOutput(data.hands || [], data.pose || null, data.timestamp, data.inferenceMs);
-          this.isProcessingFrame = false;
-        }
-      };
-      this.worker.onerror = event => {
-        this.isProcessingFrame = false;
-        this.workerReady = false;
-        this.workerStatus = 'error';
-        this.workerError = event.message || 'Vision worker failed.';
-        this.emitStatusFrame();
-      };
-      this.worker.postMessage({ type: 'init' });
-    } catch (err) {
-      console.error('[VisionManager] MediaPipe initialization error:', err);
-      this.workerReady = false;
-      this.workerStatus = 'error';
-      this.workerError = err instanceof Error ? err.message : String(err);
-      this.emitStatusFrame();
-    }
-
     this.startLoop();
+  }
+
+  private startWorker(): void {
+    try {
+      this.worker = new Worker(new URL('./vision.worker.ts', import.meta.url), { type: 'module' });
+    } catch (err) {
+      this.failWorker(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    this.worker.onmessage = (event: MessageEvent<VisionWorkerResponse>) => this.onWorkerMessage(event.data);
+    this.worker.onerror = event => {
+      console.error('[VisionManager] Vision worker error:', event.message);
+      this.failWorker(event.message || 'Vision worker crashed.');
+    };
+    this.postToWorker({ type: 'init', delegate: this.preferredDelegate });
+  }
+
+  private postToWorker(message: VisionWorkerRequest, transfer: Transferable[] = []): void {
+    this.worker?.postMessage(message, transfer);
+  }
+
+  private onWorkerMessage(msg: VisionWorkerResponse): void {
+    if (msg.type === 'landmarks') {
+      this.frameInFlight = false;
+      this.delegate = msg.delegate;
+      this.handleOutput(msg.hands, msg.pose, msg.timestamp, msg.inferenceMs, msg.isLowLight);
+    } else if (msg.type === 'init_complete') {
+      this.hasHandModel = msg.hasHandModel;
+      this.hasPoseModel = msg.hasPoseModel;
+      this.delegate = msg.delegate;
+      if (msg.success) {
+        this.workerReady = true;
+        this.workerStatus = 'ready';
+        this.workerError = undefined;
+        console.log('[VisionManager] MediaPipe worker ready:', {
+          delegate: this.delegate,
+          hand: this.hasHandModel,
+          pose: this.hasPoseModel,
+        });
+        this.emitStatusFrame();
+      } else {
+        this.failWorker(msg.error ?? 'Could not initialize MediaPipe vision models.');
+      }
+    }
+  }
+
+  private failWorker(error: string): void {
+    this.workerReady = false;
+    this.workerStatus = 'error';
+    this.workerError = error;
+    this.terminateWorker();
+    this.emitStatusFrame();
+  }
+
+  private terminateWorker(): void {
+    if (!this.worker) return;
+    this.postToWorker({ type: 'close' });
+    this.worker.terminate();
+    this.worker = null;
+    this.frameInFlight = false;
   }
 
   private emitStatusFrame(): void {
@@ -165,6 +193,7 @@ export class VisionManager {
         workerError: this.workerError,
         hasHandModel: this.hasHandModel,
         hasPoseModel: this.hasPoseModel,
+        delegate: this.delegate,
       },
     };
     for (const cb of this.callbacks) {
@@ -173,17 +202,24 @@ export class VisionManager {
   }
 
   private startLoop(): void {
-    const targetIntervalMs = 1000 / 30; // Hand tracking cap; pose runs at 15 FPS in the worker.
+    const targetIntervalMs = 1000 / 24; // Cap at 24 FPS
 
     const loop = (now: number) => {
       this.animFrameId = requestAnimationFrame(loop);
 
+      if (this.frameInFlight && now - this.frameSentAt > FRAME_STALL_TIMEOUT_MS) {
+        console.warn('[VisionManager] Vision worker stalled; resuming frame pump.');
+        this.frameInFlight = false;
+      }
+
+      const video = this.video;
       if (
-        !this.video ||
-        this.video.readyState < 2 ||
-        this.video.videoWidth <= 0 ||
-        this.video.videoHeight <= 0 ||
-        this.isProcessingFrame ||
+        !video ||
+        !this.worker ||
+        video.readyState < 2 ||
+        video.videoWidth <= 0 ||
+        video.videoHeight <= 0 ||
+        this.frameInFlight ||
         !this.workerReady
       ) {
         return;
@@ -194,25 +230,22 @@ export class VisionManager {
       }
 
       this.lastFrameTime = now;
-      this.isProcessingFrame = true;
+      this.frameInFlight = true;
+      this.frameSentAt = now;
 
-      const frameTs = Math.max(this.lastFrameTs + 1, Math.floor(now));
-      this.lastFrameTs = frameTs;
-      createImageBitmap(this.video)
-        .then(imageBitmap => {
-          if (!this.worker || !this.workerReady) {
-            imageBitmap.close();
-            this.isProcessingFrame = false;
+      // One frame in flight at a time: the worker always gets the freshest frame
+      // and never builds a backlog (which would add latency).
+      createImageBitmap(video)
+        .then(frame => {
+          if (!this.worker) {
+            frame.close();
             return;
           }
-          this.worker.postMessage(
-            { type: 'process_frame', data: { imageBitmap, timestamp: frameTs } },
-            [imageBitmap]
-          );
+          this.postToWorker({ type: 'frame', frame, timestamp: now }, [frame]);
         })
         .catch(err => {
-          console.warn('[VisionManager] Could not capture video frame:', err);
-          this.isProcessingFrame = false;
+          console.warn('[VisionManager] createImageBitmap warning:', err);
+          this.frameInFlight = false;
         });
     };
 
@@ -223,7 +256,8 @@ export class VisionManager {
     hands: Landmark3D[][],
     pose: Landmark3D[] | null,
     timestamp: number,
-    inferenceMs: number
+    inferenceMs: number,
+    isLowLight: boolean
   ): void {
     const now = performance.now();
     if (this.lastOutputTime > 0) {
@@ -241,23 +275,6 @@ export class VisionManager {
     }
 
     const isTrackingLost = this.lastTrackedAt === 0 || now - this.lastTrackedAt > 350;
-
-    // Diagnostic checks: ambient brightness
-    if (now - this.lastBrightnessCheck > 1000 && this.sampleCtx && this.video && this.video.videoWidth > 0) {
-      this.lastBrightnessCheck = now;
-      try {
-        this.sampleCtx.drawImage(this.video, 0, 0, 64, 48);
-        const imgData = this.sampleCtx.getImageData(0, 0, 64, 48).data;
-        let brightnessSum = 0;
-        for (let i = 0; i < imgData.length; i += 4) {
-          brightnessSum += (imgData[i] + imgData[i + 1] + imgData[i + 2]) / 3;
-        }
-        const avgBrightness = brightnessSum / (imgData.length / 4);
-        this.cachedLowLight = avgBrightness < 38;
-      } catch {
-        // Ignore canvas security errors
-      }
-    }
 
     // Check cropped upper body (landmarks 11, 12 are left/right shoulders)
     let isCroppedBody = false;
@@ -281,7 +298,7 @@ export class VisionManager {
     const diagnostics: VisionDiagnostics = {
       fps: Math.round(this.rollingFps),
       inferenceMs: Math.round(inferenceMs),
-      isLowLight: this.cachedLowLight,
+      isLowLight,
       isCroppedBody,
       isCroppedHands,
       isTrackingLost,
@@ -289,6 +306,7 @@ export class VisionManager {
       workerError: this.workerError,
       hasHandModel: this.hasHandModel,
       hasPoseModel: this.hasPoseModel,
+      delegate: this.delegate,
     };
 
     const frameData: VisionFrameData = {
@@ -308,8 +326,7 @@ export class VisionManager {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
-    this.worker?.terminate();
-    this.worker = null;
+    this.terminateWorker();
     this.workerReady = false;
     if (this.stream) {
       for (const track of this.stream.getTracks()) {

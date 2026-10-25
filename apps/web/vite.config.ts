@@ -38,4 +38,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
   },
+  worker: {
+    // The MediaPipe worker loads its Wasm loader via dynamic import(), which needs a module worker.
+    format: 'es',
+  },
 });
