@@ -1,10 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { bodyMetrics, BodyCalibrationCapture, LeftHandCalibrationCapture, DEFAULT_MOVEMENT_SENSITIVITY, type CalibrationProfile } from '../gestures/calibration.ts';
+import { bodyMetrics, DEFAULT_MOVEMENT_SENSITIVITY, type CalibrationProfile } from '../gestures/calibration.ts';
 import { movementThresholds, TorsoLeanController, LeftHandCameraController, type CameraTurnIntent } from '../gestures/combatGestures.ts';
 import type { VisionFrameData } from '../vision/visionManager.ts';
 
-type Direction = 'Forward' | 'Backward' | 'Left' | 'Right' | 'Stop';
-const directions: Direction[] = ['Forward', 'Backward', 'Left', 'Right', 'Stop'];
+function sandboxButtonStyle(disabled = false): React.CSSProperties {
+  return {
+    padding: '0.7rem 0.85rem',
+    borderRadius: 10,
+    border: '1px solid #6ee7b7',
+    fontSize: '0.88rem',
+    fontWeight: 800,
+    color: '#14532d',
+    background: 'linear-gradient(180deg, #d1fae5, #86efac)',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.55 : 1,
+  };
+}
 
 /** Uses the real movement controller without sending any game intents. */
 export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
@@ -15,92 +26,25 @@ export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
 }) {
   const controller = useRef(new TorsoLeanController());
   const cameraController = useRef(new LeftHandCameraController());
-  const moved = useRef(false);
   const [intent, setIntent] = useState({ moveX: 0, moveZ: 0 });
   const [camIntent, setCamIntent] = useState<CameraTurnIntent>({ turnDir: 0, tilt: 0, active: false });
-  const [completed, setCompleted] = useState<Direction[]>([]);
-  const [attempt, setAttempt] = useState(0);
-  const [recentering, setRecentering] = useState(false);
-  const [recenterMessage, setRecenterMessage] = useState('');
-  const recenterCapture = useRef(new BodyCalibrationCapture(20));
-  const [recenteringHand, setRecenteringHand] = useState(false);
-  const [recenterHandMessage, setRecenterHandMessage] = useState('');
-  const recenterHandCapture = useRef(new LeftHandCalibrationCapture(15));
   const ready = Boolean(profile.bodyCalibrated && profile.bodyBaseline);
   const tracked = Boolean(bodyMetrics(frame?.pose ?? null));
 
   useEffect(() => {
-    if (!recentering) return;
-    const timeout = window.setTimeout(() => {
-      setRecentering(false);
-      setRecenterMessage('Tracking was insufficient. Keep face and shoulders visible, then retry.');
-    }, 3000);
-    return () => window.clearTimeout(timeout);
-  }, [recentering]);
-
-  useEffect(() => {
-    if (!recenteringHand) return;
-    const timeout = window.setTimeout(() => {
-      setRecenteringHand(false);
-      setRecenterHandMessage('Hand tracking was insufficient. Hold left hand open with 5 fingers pointing at camera in view.');
-    }, 3000);
-    return () => window.clearTimeout(timeout);
-  }, [recenteringHand]);
-
-  useEffect(() => {
     controller.current.reset();
     cameraController.current.reset();
-    moved.current = false;
-    setCompleted([]);
     setIntent({ moveX: 0, moveZ: 0 });
-  }, [profile.bodyBaseline, profile.movementSensitivity, profile.cameraBaselineTilt, ready, attempt]);
+  }, [profile.bodyBaseline, profile.movementSensitivity, profile.cameraBaselineTilt, ready]);
 
   useEffect(() => {
     if (!frame) return;
-    if (recentering) {
-      const result = recenterCapture.current.update(frame.pose, frame.timestamp);
-      if (result) {
-        setRecentering(false);
-        if (result.error) setRecenterMessage('Stance moved too much. Hold still and retry.');
-        else {
-          setRecenterMessage('Neutral stance updated for this room.');
-          onChange({ ...profile, bodyBaseline: result.baseline, neutralTorsoCenter: result.center, shoulderWidth: result.baseline.shoulderWidth, bodyCalibrated: true });
-        }
-      }
-      return;
-    }
-    if (recenteringHand) {
-      const result = recenterHandCapture.current.update(frame.hands, frame.pose, frame.timestamp);
-      if (result) {
-        setRecenteringHand(false);
-        if (result.error) setRecenterHandMessage('Hand moved too much or 5 fingers not open. Hold steady and retry.');
-        else {
-          setRecenterHandMessage('Left hand neutral position (5 fingers open pointing at camera) calibrated.');
-          onChange({ ...profile, cameraBaselineTilt: result.cameraBaselineTilt });
-        }
-      }
-    }
     const movement = controller.current.update(frame.pose, profile, frame.timestamp);
     setIntent(movement);
     const cam = cameraController.current.update(frame.hands, frame.pose, frame.timestamp, profile);
     setCamIntent(cam);
-    if (!ready || !bodyMetrics(frame.pose)) return;
-    const detected: Direction[] = [];
-    if (movement.moveZ < 0) detected.push('Forward');
-    if (movement.moveZ > 0) detected.push('Backward');
-    if (movement.moveX < 0) detected.push('Left');
-    if (movement.moveX > 0) detected.push('Right');
-    if (detected.length) moved.current = true;
-    else if (moved.current) detected.push('Stop');
-    setCompleted(previous => [...new Set([...previous, ...detected])]);
-  }, [frame, ready, profile.bodyBaseline, profile.movementSensitivity, profile.cameraBaselineTilt, attempt, recentering, recenteringHand]);
+  }, [frame, profile, profile.bodyBaseline, profile.movementSensitivity, profile.cameraBaselineTilt]);
 
-  const active: Direction[] = [];
-  if (intent.moveZ < 0) active.push('Forward');
-  if (intent.moveZ > 0) active.push('Backward');
-  if (intent.moveX < 0) active.push('Left');
-  if (intent.moveX > 0) active.push('Right');
-  const status = !ready ? 'Calibrate your neutral stance first' : !tracked ? 'Tracking lost — movement stopped' : active.length ? active.join(' + ') : 'Neutral — stopped';
   const thresholds = movementThresholds(profile.movementSensitivity);
   const sensitivity = { ...DEFAULT_MOVEMENT_SENSITIVITY, ...profile.movementSensitivity };
   const diag = frame?.diagnostics;
@@ -115,7 +59,6 @@ export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
         <span style={{ color: '#34d399' }}>Response: <strong>~{diag?.gestureLatencyMs ?? 18} ms (1€ + Lead)</strong></span>
       </div>
     </div>
-    <p style={{ fontSize: '0.83rem', color: '#94a3b8' }}>Step or lean (shoulders + head) forward/backward, and lean left/right. Return to your calibrated stance to stop. Single cardinal direction detected (no diagonals). This preview does not move your fighter.</p>
     <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
       <div aria-label="Live movement direction" style={{ position: 'relative', width: 140, height: 100, background: '#1e293b', borderRadius: 8, border: '1px solid #475569' }}>
         <span style={{ position: 'absolute', top: 2, left: 42, fontSize: 11 }}>Forward</span>
@@ -134,27 +77,36 @@ export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
         </span>
       </div>
       <div>
-        <div role="status">{status}</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-          {directions.map(direction => <span key={direction} style={{ padding: '4px 6px', borderRadius: 4, fontSize: 12, background: completed.includes(direction) ? '#065f46' : '#334155' }}>{completed.includes(direction) ? '✓ ' : '○ '}{direction}</span>)}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Sensitivity</div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            {(['forward', 'backward', 'left', 'right', 'camera'] as const).map(direction => (
+              <label key={direction} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, minWidth: 0, fontSize: 12 }}>
+                <span style={{ fontWeight: 800, textAlign: 'center', lineHeight: 1.2 }}>
+                  {direction === 'camera' ? 'Camera sen' : direction[0].toUpperCase() + direction.slice(1)}
+                </span>
+                <span style={{ color: '#86efac', fontWeight: 700, margin: '2px 0 4px' }}>{sensitivity[direction].toFixed(2)}×</span>
+                <span style={{ fontWeight: 800, color: '#86efac' }}>+</span>
+                <input
+                  aria-label={`${direction} movement sensitivity`}
+                  type="range"
+                  min="0.05"
+                  max="3"
+                  step="0.05"
+                  value={sensitivity[direction]}
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...profile, movementSensitivity: { ...sensitivity, [direction]: Number(event.target.value) } })}
+                  style={{ writingMode: 'vertical-lr', direction: 'rtl', width: 28, height: 120, margin: '4px 0', accentColor: '#86efac' }}
+                />
+                <span style={{ fontWeight: 800, color: '#94a3b8' }}>−</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#93c5fd', marginTop: 8 }}>Zones: forward ≥ {thresholds.forward.toFixed(2)}× · backward ≤ {thresholds.backward.toFixed(2)}× · left ≥ {thresholds.left.toFixed(2)}× · right ≥ {thresholds.right.toFixed(2)}× · camera tilt ≥ {Math.round(Math.asin(Math.min(1, thresholds.camera)) * 180 / Math.PI)}° (tilt left/right with 5 fingers open)</div>
         </div>
-        <p style={{ fontSize: 12 }}>{completed.length === directions.length ? 'All movement checks complete. Keep practicing or enter the match.' : 'Checks are optional. Stop is checked after moving and returning to neutral.'}</p>
-        <div style={{ marginBottom: 8 }}>
-          {(['forward', 'backward', 'left', 'right', 'camera'] as const).map(direction => <label key={direction} style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>
-            {direction[0].toUpperCase() + direction.slice(1)} sensitivity — {sensitivity[direction].toFixed(2)}×
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span>Less movement needed</span>
-              <input aria-label={`${direction} movement sensitivity`} type="range" min="0.05" max="3" step="0.05" value={sensitivity[direction]}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) => onChange({ ...profile, movementSensitivity: { ...sensitivity, [direction]: Number(event.target.value) } })}/>
-              <span>More movement needed</span></div>
-          </label>)}
-          <div style={{ fontSize: 11, color: '#93c5fd' }}>Zones: forward ≥ {thresholds.forward.toFixed(2)}× · backward ≤ {thresholds.backward.toFixed(2)}× · left ≥ {thresholds.left.toFixed(2)}× · right ≥ {thresholds.right.toFixed(2)}× · camera tilt ≥ {Math.round(Math.asin(Math.min(1, thresholds.camera)) * 180 / Math.PI)}° (tilt left/right with 5 fingers open)</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          <button onClick={() => onChange({ ...profile, movementSensitivity: { ...DEFAULT_MOVEMENT_SENSITIVITY } })} style={sandboxButtonStyle()}>Reset sensitivity</button>
+          <button onClick={onCalibrate} style={sandboxButtonStyle()}>Recalibrate body</button>
         </div>
-        <button onClick={() => onChange({ ...profile, movementSensitivity: { ...DEFAULT_MOVEMENT_SENSITIVITY } })}>Reset sensitivity</button>{' '}
-        <button disabled={recentering} onClick={() => { recenterCapture.current = new BodyCalibrationCapture(20); setRecenterMessage('Stand comfortably still while recentering…'); setRecentering(true); }}>Recenter now</button>{' '}
-        <button disabled={recenteringHand} onClick={() => { recenterHandCapture.current = new LeftHandCalibrationCapture(15); setRecenterHandMessage('Hold 5 fingers open pointing steady at camera…'); setRecenteringHand(true); }}>Recenter Left Hand (5 Fingers Open)</button>{' '}
-        <span role="status">{recentering ? `${recenterCapture.current.samples.length}/20 frames` : recenteringHand ? `${recenterHandCapture.current.sampleCount}/15 frames` : recenterMessage || recenterHandMessage}</span><br/>
-        <button onClick={() => setAttempt(value => value + 1)}>Reset movement practice</button>{' '}
-        <button onClick={onCalibrate}>Recalibrate body</button>
       </div>
     </div>
   </section>;

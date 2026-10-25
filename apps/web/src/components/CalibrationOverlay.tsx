@@ -1,5 +1,4 @@
 import { MovementSandbox } from './MovementSandbox.tsx';
-import { BodyMovementGuide } from './BodyMovementGuide.tsx';
 import { CombinedCalibrationCapture, DEFAULT_MOVEMENT_SENSITIVITY } from '../gestures/calibration.ts';
 import React, { useEffect, useRef, useState } from 'react';
 import type { PieceClass } from '@let-him-rook/shared';
@@ -95,7 +94,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [pinchThresholds, setPinchThresholds] = useState<{ close: number; open: number }>(
     initialProfile.pinchThresholds ?? DEFAULT_CALIBRATION.pinchThresholds
   );
-  const [statusMessage, setStatusMessage] = useState<string>(
+  const [, setStatusMessage] = useState<string>(
     savedProfile
       ? 'Saved personal calibration loaded. Recalibrate below or skip directly to match.'
       : 'Align your upper body and hands in the camera view.'
@@ -340,7 +339,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       <div
         style={{
           width: '100%',
-          maxWidth: 680,
+          maxWidth: 820,
           backgroundColor: '#171b2c',
           borderRadius: 16,
           padding: '1.5rem 2rem',
@@ -433,17 +432,29 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <button onClick={() => setStep('neutral')} aria-current={step === 'neutral' ? 'step' : undefined}>1. Body + Pinch Calibration</button>
-          <button onClick={() => setStep('practice')} aria-current={step === 'practice' ? 'step' : undefined}>2. Gesture Sandbox</button>
-        </div>
+        {step === 'neutral' && (
+        <img
+          src="/calibration-gestures.png"
+          alt="Neutral pose: right hand in an L, left hand fingertips at the camera. Pinch to pick up, swing the left hand to turn."
+          style={{
+            display: 'block',
+            width: 'auto',
+            maxWidth: '100%',
+            maxHeight: 338,
+            height: 'auto',
+            margin: '0 auto 0.75rem',
+            borderRadius: 12,
+            border: '1px solid #31406b',
+          }}
+        />
+        )}
 
         {/* Live Video + Skeleton Overlay Canvas */}
         <div
           style={{
             position: 'relative',
             width: '100%',
-            height: 270,
+            height: 382,
             backgroundColor: '#0f172a',
             borderRadius: 12,
             overflow: 'hidden',
@@ -487,18 +498,6 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
               </div>
             )}
 
-          {step === 'neutral' && <svg viewBox="0 0 640 360" preserveAspectRatio="none" aria-hidden="true" style={{ position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none' }}>
-            <circle cx="320" cy="77" r="33" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
-            <path d="M245 170 Q255 125 290 122 L350 122 Q385 125 395 170 L412 285 L228 285 Z" fill="rgba(250,204,21,.08)" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
-            <path d="M245 165 L190 207 M395 165 L450 207" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
-            <circle cx="190" cy="207" r="22" fill="rgba(56, 189, 248, 0.12)" stroke="#38bdf8" strokeWidth="3" strokeDasharray="6 4" />
-            <text x="128" y="240" fill="#38bdf8" fontSize="13" fontWeight="bold">5 FINGERS OPEN</text>
-            <text x="135" y="255" fill="#93c5fd" fontSize="11">POINT AT CAMERA</text>
-            <circle cx="450" cy="207" r="22" fill="rgba(168, 85, 247, 0.12)" stroke="#a855f7" strokeWidth="3" strokeDasharray="6 4" />
-            <text x="405" y="240" fill="#fef08a" fontSize="13" fontWeight="bold">RIGHT PINCH</text>
-            <text x="415" y="255" fill="#cbd5e1" fontSize="11">OPEN → PINCH</text>
-          </svg>}
-          {/* Live Telemetry Overlay at bottom of video */}
           <div
             style={{
               position: 'absolute',
@@ -531,26 +530,88 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </div>
         </div>
 
-        <p style={{ fontSize: '0.82rem', color: '#93c5fd', marginBottom: '0.9rem' }}>
-          {statusMessage}
-        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+          <button
+            onClick={() => setStep('neutral')}
+            aria-current={step === 'neutral' ? 'step' : undefined}
+            style={{
+              padding: '0.7rem 0.8rem',
+              borderRadius: 10,
+              fontSize: '0.92rem',
+              fontWeight: 800,
+              cursor: 'pointer',
+              color: step === 'neutral' ? '#14532d' : '#e2e8f0',
+              background: step === 'neutral' ? 'linear-gradient(180deg, #d1fae5, #86efac)' : '#0f172a',
+              border: step === 'neutral' ? '1px solid #6ee7b7' : '1px solid #334155',
+            }}
+          >
+            1. Body + Pinch
+          </button>
+          <button
+            onClick={() => setStep('practice')}
+            aria-current={step === 'practice' ? 'step' : undefined}
+            style={{
+              padding: '0.7rem 0.8rem',
+              borderRadius: 10,
+              fontSize: '0.92rem',
+              fontWeight: 800,
+              cursor: 'pointer',
+              color: step === 'practice' ? '#ecfdf5' : '#e2e8f0',
+              background: step === 'practice' ? 'linear-gradient(180deg, #059669, #047857)' : '#0f172a',
+              border: step === 'practice' ? '1px solid #34d399' : '1px solid #334155',
+            }}
+          >
+            2. Gesture Sandbox
+          </button>
+        </div>
 
-        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline), movementSensitivity, cameraBaselineTilt}} pose={lastFrameData?.pose ?? null}/>
-        {step === 'neutral' && <section style={{padding:16,background:'#1e293b',border:'2px solid #facc15',borderRadius:8,marginTop:10}}>
-          <h3 style={{margin:'0 0 8px',color:'#facc15'}}>Body, Hands, and Camera Direction Calibration</h3>
-          <p>Stand inside the outline with face and shoulders visible. Open all 5 fingers on your left hand pointing at the camera as the neutral position. Use your right hand for pinch calibration.</p>
-          <div role="status" aria-live="polite" style={{fontSize:20,fontWeight:800,padding:12,background:'#422006',color:'#fef08a',borderRadius:6,marginBottom:8}}>
-            {captureStart === null ? 'Ready to calibrate' : clock < captureStart
+        {step === 'neutral' && <section style={{padding:16,background:'#1e293b',border:'2px solid #86efac',borderRadius:8,marginTop:10}}>
+          <p style={{ marginTop: 0, marginBottom: 0, fontSize: '1.2rem', lineHeight: 1.45, color: '#f8fafc' }}>Keep your face and shoulders in the camera. Open all 5 fingers on your left hand pointing at the camera as the neutral position. Use your right hand for pinch calibration.</p>
+          {captureStart !== null && (
+          <div role="status" aria-live="polite" style={{fontSize:20,fontWeight:800,padding:12,background:'#14532d',color:'#d1fae5',borderRadius:6,marginTop:12,marginBottom:8}}>
+            {clock < captureStart
               ? `Get ready — calibration starts in ${Math.ceil((captureStart-clock)/1000)} seconds. Open 5 fingers on left hand pointing at camera.`
               : clock < captureStart + 2500
                 ? 'Left hand: 5 fingers open pointing at camera (neutral). Right hand: open palm.'
                 : 'Keep left hand 5 fingers open pointing at camera. Right hand: pinch thumb and index together.'}
           </div>
+          )}
           {captureStart !== null && clock >= captureStart && <progress aria-label="Calibration progress" value={Math.min(5000,clock-captureStart)} max={5000} style={{width:'100%',height:16}} />}
           {captureError && <p role="alert" style={{color:'#fecaca',fontWeight:700}}>{captureError}</p>}
-          <div style={{display:'flex',gap:8,marginTop:8}}>
-            <button onClick={handleCaptureNeutral} disabled={captureStart !== null}>{captureError ? 'Retry calibration' : 'Start 5-second calibration'}</button>
-            <button onClick={handleSkipWithDefaults}>Skip to Match</button>
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button
+              onClick={handleCaptureNeutral}
+              disabled={captureStart !== null}
+              style={{
+                flex: 1,
+                padding: '0.8rem 1rem',
+                borderRadius: 10,
+                border: 'none',
+                fontSize: '0.95rem',
+                fontWeight: 800,
+                color: '#14532d',
+                background: 'linear-gradient(180deg, #d1fae5, #86efac)',
+                cursor: captureStart !== null ? 'not-allowed' : 'pointer',
+                opacity: captureStart !== null ? 0.55 : 1,
+              }}
+            >
+              {captureError ? 'Retry calibration' : 'Start 5-second calibration'}
+            </button>
+            <button
+              onClick={handleSkipWithDefaults}
+              style={{
+                padding: '0.8rem 1rem',
+                borderRadius: 10,
+                border: '1px solid #475569',
+                background: '#0f172a',
+                color: '#e2e8f0',
+                fontSize: '0.95rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Skip to Match
+            </button>
           </div>
         </section>}
 
