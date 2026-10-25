@@ -212,9 +212,10 @@ export const App: React.FC = () => {
     visionManagerRef.current = vm;
 
     vm.subscribe(frameData => {
-      // Gesture processing uses every inference result, while visual overlays only
+      // Calibration needs every inference result to collect enough body samples.
+      // During gameplay, visual overlays only
       // need 10 FPS. Avoid rerendering the full React + R3F tree 30 times/second.
-      if (frameData.timestamp - lastVisionUiUpdateRef.current >= 100) {
+      if (showCalibrationRef.current || frameData.timestamp - lastVisionUiUpdateRef.current >= 100) {
         lastVisionUiUpdateRef.current = frameData.timestamp;
         setLastFrameData(frameData);
       }
