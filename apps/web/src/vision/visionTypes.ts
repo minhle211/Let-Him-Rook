@@ -6,10 +6,13 @@ export interface Landmark3D {
 }
 
 export type VisionDelegate = 'GPU' | 'CPU';
+export type VisionMode = 'chess' | 'duel_pose_only' | 'duel_full';
 
 export interface VisionDiagnostics {
   fps: number;
   inferenceMs: number;
+  gestureLatencyMs?: number;
+  visionMode?: VisionMode;
   isLowLight: boolean;
   isCroppedBody: boolean;
   isCroppedHands: boolean;
@@ -31,7 +34,8 @@ export interface VisionFrameData {
 
 export type VisionWorkerRequest =
   | { type: 'init'; delegate: VisionDelegate }
-  | { type: 'frame'; frame: ImageBitmap; timestamp: number }
+  | { type: 'set_mode'; mode: VisionMode }
+  | { type: 'frame'; frame: ImageBitmap; timestamp: number; mode?: VisionMode }
   | { type: 'close' };
 
 export type VisionWorkerResponse =

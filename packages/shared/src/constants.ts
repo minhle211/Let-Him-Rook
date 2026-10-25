@@ -15,8 +15,8 @@ export const OBSTACLE_MAX_HP = 75; // 25 HP per hit
 export const OBSTACLE_RADIUS = 0.42;
 
 export const DUEL_DURATION_MS = 90_000;
-export const SERVER_TICK_HZ = 20;
-export const SERVER_TICK_MS = 1000 / SERVER_TICK_HZ; // 50ms
+export const SERVER_TICK_HZ = 60;
+export const SERVER_TICK_MS = 1000 / SERVER_TICK_HZ; // ~16.67ms
 export const TRACKING_LOSS_STOP_MS = 300;
 export const RECONNECT_GRACE_MS = 30_000;
 export const DUEL_INTRO_DURATION_MS = 2000;

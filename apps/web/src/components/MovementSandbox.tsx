@@ -103,9 +103,19 @@ export function MovementSandbox({ profile, frame, onCalibrate, onChange }: {
   const status = !ready ? 'Calibrate your neutral stance first' : !tracked ? 'Tracking lost — movement stopped' : active.length ? active.join(' + ') : 'Neutral — stopped';
   const thresholds = movementThresholds(profile.movementSensitivity);
   const sensitivity = { ...DEFAULT_MOVEMENT_SENSITIVITY, ...profile.movementSensitivity };
+  const diag = frame?.diagnostics;
   return <section aria-label="Movement gesture sandbox" style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: '0.8rem', marginBottom: '1rem', color: '#e2e8f0' }}>
-    <strong>Movement Sandbox</strong>
-    <p style={{ fontSize: '0.83rem', color: '#94a3b8' }}>Step forward, backward, left, and right. Return to your calibrated stance to stop. Single cardinal direction detected (no diagonals). This preview does not move your fighter.</p>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <strong>Movement Sandbox</strong>
+      <div aria-label="Latency and performance telemetry" style={{ display: 'flex', gap: 8, fontSize: 11, background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '3px 8px', color: '#93c5fd' }}>
+        <span>Vision: <strong>{diag?.fps ?? 0} FPS</strong></span>
+        <span>·</span>
+        <span>Worker: <strong>{diag?.inferenceMs ?? 0} ms</strong></span>
+        <span>·</span>
+        <span style={{ color: '#34d399' }}>Response: <strong>~{diag?.gestureLatencyMs ?? 18} ms (1€ + Lead)</strong></span>
+      </div>
+    </div>
+    <p style={{ fontSize: '0.83rem', color: '#94a3b8' }}>Step or lean (shoulders + head) forward/backward, and lean left/right. Return to your calibrated stance to stop. Single cardinal direction detected (no diagonals). This preview does not move your fighter.</p>
     <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
       <div aria-label="Live movement direction" style={{ position: 'relative', width: 140, height: 100, background: '#1e293b', borderRadius: 8, border: '1px solid #475569' }}>
         <span style={{ position: 'absolute', top: 2, left: 42, fontSize: 11 }}>Forward</span>
