@@ -86,6 +86,7 @@ export const App: React.FC = () => {
   const leftCameraRef = useRef<LeftHandCameraController>(new LeftHandCameraController());
   const combatDetectorRef = useRef<CombatGestureDetector>(new CombatGestureDetector());
   const keysPressedRef = useRef<Set<string>>(new Set());
+  const lastVisionUiUpdateRef = useRef(0);
   const cameraTelemetryRef = useRef<CameraTurnIntent>(cameraTelemetry);
   cameraTelemetryRef.current = cameraTelemetry;
   const lastMoveSentRef = useRef<{
@@ -211,7 +212,12 @@ export const App: React.FC = () => {
     visionManagerRef.current = vm;
 
     vm.subscribe(frameData => {
-      setLastFrameData(frameData);
+      // Gesture processing uses every inference result, while visual overlays only
+      // need 10 FPS. Avoid rerendering the full React + R3F tree 30 times/second.
+      if (frameData.timestamp - lastVisionUiUpdateRef.current >= 100) {
+        lastVisionUiUpdateRef.current = frameData.timestamp;
+        setLastFrameData(frameData);
+      }
 
       // Pause live game gestures while calibration modal is open
       if (showCalibrationRef.current) return;
@@ -754,6 +760,7 @@ export const App: React.FC = () => {
         shadows
         // Render at 1x even on Retina: at 2x the scene saturates the GPU and starves MediaPipe (~20 FPS -> ~5 FPS).
         dpr={1}
+        gl={{ antialias: false, powerPreference: 'high-performance' }}
         camera={{ position: [0, 8.8, 8.2], fov: 45 }}
         style={{ width: '100%', height: '100%' }}
       >
@@ -762,7 +769,7 @@ export const App: React.FC = () => {
           position={[6, 12, 6]}
           intensity={1.25}
           castShadow
-          shadow-mapSize={[1024, 1024]}
+          shadow-mapSize={[512, 512]}
         />
         <pointLight position={[-6, 6, -6]} intensity={0.5} />
 
