@@ -112,7 +112,7 @@ export interface ProjectileState {
   splashRadius?: number;
 }
 
-export type ObstacleType = 'piece' | 'glass' | 'vase';
+export type ObstacleType = 'piece' | 'tree' | 'tower';
 
 export interface ObstacleState {
   id: string;
@@ -126,6 +126,8 @@ export interface ObstacleState {
   hitsRemaining: number;
   maxHits: number;
   frozenRemainingMs: number;
+  /** Blocks movement and attacks but never takes damage (trees). */
+  indestructible?: boolean;
 }
 
 export interface IceHazardState {

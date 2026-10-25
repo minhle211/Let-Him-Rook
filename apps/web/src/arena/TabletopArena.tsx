@@ -1,14 +1,17 @@
 import React, { useMemo } from 'react';
 import {
-  FIXED_PROPS,
   getBoardPiecesFromFen,
   indexToSquare,
   squareToTableCoords,
+  TABLE_HALF_EXTENT,
   type BoardSquare,
   type MatchPhase,
   type ObstacleState,
 } from '@let-him-rook/shared';
 import { PieceCharacter } from '../characters/PieceCharacter.tsx';
+import { FairytaleRuins } from './FairytaleRuins.tsx';
+import { ArenaFeatures } from './ArenaFeatures.tsx';
+import { StoneBattlefield, weatheredShade } from './StoneBattlefield.tsx';
 
 interface TabletopArenaProps {
   hoverSquare: BoardSquare | null;
@@ -42,15 +45,17 @@ export const TabletopArena: React.FC<TabletopArenaProps> = ({
     return list;
   }, []);
 
-  const propsById = useMemo(() => {
-    const map = new Map<string, ObstacleState>();
-    for (const obs of obstacles) {
-      map.set(obs.id, obs);
-    }
-    return map;
-  }, [obstacles]);
-
   const isDuel = phase === 'active_duel' || phase === 'duel_intro' || phase === 'duel_result';
+
+  const { lightStone, darkStone } = useMemo(() => {
+    const light: Record<string, string> = {};
+    const dark: Record<string, string> = {};
+    squares.forEach(({ square }, i) => {
+      light[square] = weatheredShade('#d3ccbc', i * 3 + 1, 0.1);
+      dark[square] = weatheredShade('#45484e', i * 3 + 2, 0.16);
+    });
+    return { lightStone: light, darkStone: dark };
+  }, [squares]);
 
   const boardPieces = useMemo(() => {
     if (!fen || isDuel) return [];
@@ -64,40 +69,19 @@ export const TabletopArena: React.FC<TabletopArenaProps> = ({
 
   return (
     <group>
-      {/* 14x14 Tabletop Wood Base */}
+      {/* Stone base under the whole battlefield; its dark top shows as the grout between the flagstones */}
       <mesh position={[0, -0.2, 0]} receiveShadow>
-        <boxGeometry args={[14, 0.4, 14]} />
-        <meshStandardMaterial color="#2d1d13" roughness={0.7} metalness={0.1} />
+        <boxGeometry args={[TABLE_HALF_EXTENT * 2, 0.4, TABLE_HALF_EXTENT * 2]} />
+        <meshStandardMaterial color="#2f2c28" roughness={1} />
       </mesh>
+      <StoneBattlefield />
 
-      {/* 4 Glowing Perimeter Boundary Rails along outer edges of 14x14 tabletop ([-7, 7]) */}
-      <group position={[0, 0.06, 0]}>
-        {/* North Rail (z = -7) */}
-        <mesh position={[0, 0, -7]}>
-          <boxGeometry args={[14.12, 0.12, 0.12]} />
-          <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.85} />
-        </mesh>
-        {/* South Rail (z = +7) */}
-        <mesh position={[0, 0, 7]}>
-          <boxGeometry args={[14.12, 0.12, 0.12]} />
-          <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.85} />
-        </mesh>
-        {/* West Rail (x = -7) */}
-        <mesh position={[-7, 0, 0]}>
-          <boxGeometry args={[0.12, 0.12, 14.12]} />
-          <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.85} />
-        </mesh>
-        {/* East Rail (x = +7) */}
-        <mesh position={[7, 0, 0]}>
-          <boxGeometry args={[0.12, 0.12, 14.12]} />
-          <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.85} />
-        </mesh>
-      </group>
+      <FairytaleRuins />
 
       {/* 8x8 Chessboard Inset Border */}
       <mesh position={[0, 0.01, 0]} receiveShadow>
         <boxGeometry args={[8.4, 0.04, 8.4]} />
-        <meshStandardMaterial color="#1f140e" roughness={0.6} />
+        <meshStandardMaterial color="#2a2a2d" roughness={0.95} />
       </mesh>
 
       {/* 64 Chessboard Squares */}
@@ -106,7 +90,8 @@ export const TabletopArena: React.FC<TabletopArenaProps> = ({
         const isSelected = selectedSquare === square;
         const isLegal = legalDestinations.includes(square);
 
-        let color = isDark ? '#4a3222' : '#d2b48c';
+        // Weathered limestone and slate squares
+        let color = isDark ? darkStone[square] : lightStone[square];
         if (isSelected) {
           color = '#ffd700'; // Gold
         } else if (isHover) {
@@ -122,10 +107,10 @@ export const TabletopArena: React.FC<TabletopArenaProps> = ({
                 onSquareClick?.(square);
               }}
             >
-              <boxGeometry args={[0.96, 0.02, 0.96]} />
+              <boxGeometry args={[0.94, 0.02, 0.94]} />
               <meshStandardMaterial
                 color={color}
-                roughness={0.5}
+                roughness={0.9}
                 emissive={isSelected ? '#554400' : isHover ? '#003344' : '#000000'}
               />
             </mesh>
@@ -147,74 +132,8 @@ export const TabletopArena: React.FC<TabletopArenaProps> = ({
         );
       })}
 
-      {/* 4 Fixed Tabletop Props: 2 Glasses and 2 Plant Vases */}
-      {FIXED_PROPS.map(prop => {
-        const state = propsById.get(prop.id);
-        const hits = state?.hitsRemaining ?? 3;
-        const isFrozen = (state?.frozenRemainingMs ?? 0) > 0;
-        if (hits <= 0) return null; // Broken
-
-        const opacity = hits === 3 ? 0.85 : hits === 2 ? 0.65 : 0.45;
-
-        if (prop.type === 'glass') {
-          return (
-            <group key={prop.id} position={[prop.x, 0.45, prop.z]}>
-              {/* Tumbler Glass */}
-              <mesh castShadow receiveShadow>
-                <cylinderGeometry args={[0.38, 0.32, 0.9, 16]} />
-                <meshPhysicalMaterial
-                  color="#dbeafe"
-                  transmission={0.75}
-                  opacity={opacity}
-                  transparent
-                  roughness={0.12}
-                  ior={1.45}
-                />
-              </mesh>
-              {/* Frozen ice crystal shell */}
-              {isFrozen && (
-                <mesh>
-                  <cylinderGeometry args={[0.42, 0.36, 0.96, 8]} />
-                  <meshStandardMaterial
-                    color="#67e8f9"
-                    emissive="#06b6d4"
-                    transparent
-                    opacity={0.65}
-                  />
-                </mesh>
-              )}
-            </group>
-          );
-        }
-
-        // Ceramic Plant Vase
-        return (
-          <group key={prop.id} position={[prop.x, 0.5, prop.z]}>
-            {/* Ceramic Pot */}
-            <mesh castShadow receiveShadow position={[0, 0, 0]}>
-              <cylinderGeometry args={[0.42, 0.3, 0.8, 16]} />
-              <meshStandardMaterial color="#9a3412" roughness={0.8} />
-            </mesh>
-            {/* Foliage */}
-            <mesh position={[0, 0.55, 0]}>
-              <sphereGeometry args={[0.45, 12, 12]} />
-              <meshStandardMaterial color="#15803d" roughness={0.9} />
-            </mesh>
-            {/* Frozen ice crystal shell */}
-            {isFrozen && (
-              <mesh position={[0, 0.3, 0]}>
-                <cylinderGeometry args={[0.5, 0.4, 1.4, 8]} />
-                <meshStandardMaterial
-                  color="#67e8f9"
-                  emissive="#06b6d4"
-                  transparent
-                  opacity={0.65}
-                />
-              </mesh>
-            )}
-          </group>
-        );
-      })}
+      {/* Puddles, trees and the castle tower */}
+      <ArenaFeatures obstacles={obstacles} />
 
       {/* Chessboard Pieces during chess turn */}
       {!isDuel &&

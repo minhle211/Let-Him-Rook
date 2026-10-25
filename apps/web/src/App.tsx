@@ -765,6 +765,9 @@ export const App: React.FC = () => {
         camera={{ position: [0, 8.8, 8.2], fov: 45 }}
         style={{ width: '100%', height: '100%' }}
       >
+        {/* Fairytale twilight: misty blue-violet sky that swallows the far ruins */}
+        <color attach="background" args={['#2a3048']} />
+        <fog attach="fog" args={['#2a3048', 16, 38]} />
         <ambientLight intensity={0.75} />
         <directionalLight
           position={[6, 12, 6]}

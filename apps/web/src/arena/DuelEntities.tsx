@@ -5,7 +5,11 @@ import {
   FIGHTER_MOVE_SPEED,
   FIGHTER_RADIUS,
   LEAN_DEADZONE,
+  TABLE_HALF_EXTENT,
   clampToTabletop,
+  puddleSpeedMultiplier,
+  pushCircleOutOfStones,
+  castleWallStones,
   type PlayerColor,
 } from '@let-him-rook/shared';
 import { PieceCharacter } from '../characters/PieceCharacter.tsx';
@@ -117,6 +121,8 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
             speed *= 1 - CLASS_ABILITY_CONFIG.bishop.iceBolt.chillSlowFactor;
           }
 
+          speed *= puddleSpeedMultiplier(pred.x, pred.z);
+
           const vx = (rightX * moveX - fwdX * moveZ) * speed;
           const vz = (rightZ * moveX - fwdZ * moveZ) * speed;
           let nextX = pred.x + vx * dt;
@@ -124,6 +130,10 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
 
           for (const obs of targetDuel.obstacles) {
             if (obs.hitsRemaining <= 0) continue;
+            if (obs.type === 'tower') {
+              ({ x: nextX, z: nextZ } = pushCircleOutOfStones(nextX, nextZ, FIGHTER_RADIUS, castleWallStones(obs.x, obs.z)));
+              continue;
+            }
             const minDist = FIGHTER_RADIUS + obs.radius;
             const d = Math.hypot(nextX - obs.x, nextZ - obs.z);
             if (d < minDist && d > 0.0001) {
@@ -241,9 +251,10 @@ export const DuelEntities: React.FC<DuelEntitiesProps> = ({
         const curFighterX = pred.x;
         const curFighterZ = pred.z;
 
-        const targetCamX = Math.max(-9.5, Math.min(9.5, curFighterX - forwardX * 5.2));
+        const camLimit = TABLE_HALF_EXTENT + 2.5;
+        const targetCamX = Math.max(-camLimit, Math.min(camLimit, curFighterX - forwardX * 5.2));
         const targetCamY = 4.1;
-        const targetCamZ = Math.max(-9.5, Math.min(9.5, curFighterZ - forwardZ * 5.2));
+        const targetCamZ = Math.max(-camLimit, Math.min(camLimit, curFighterZ - forwardZ * 5.2));
 
         const camSmooth = Math.min(1, dt * 8.5);
         camera.position.x = lerp(camera.position.x, targetCamX, camSmooth);
