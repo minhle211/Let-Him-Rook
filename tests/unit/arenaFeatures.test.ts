@@ -50,9 +50,11 @@ function shoot(duel: DuelSimulation, x: number, z: number, tx: number, tz: numbe
   for (let i = 0; i < 120 && duel.projectiles.length; i++) stepDuel(duel, duel.now + 16);
 }
 
-test('Arena: glasses and vases are replaced by two indestructible trees and a 6-hit castle tower', () => {
+test('Arena: glasses and vases are replaced by indestructible trees and a 6-hit castle tower', () => {
   const duel = arenaDuel();
-  assert.deepEqual(duel.obstacles.map(o => o.type).sort(), ['tower', 'tree', 'tree']);
+  assert.equal(duel.obstacles.filter(o => o.type === 'tree').length, TREES.length);
+  assert.equal(duel.obstacles.filter(o => o.type === 'tower').length, 1);
+  assert.equal(duel.obstacles.length, TREES.length + 1, 'nothing else (no glasses or vases)');
   assert.ok(duel.obstacles.filter(o => o.type === 'tree').every(t => t.indestructible));
   assert.equal(tower(duel).hitsRemaining, TOWER.maxHits);
 });

@@ -1,7 +1,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export const BOARD_SIZE_UNITS = 8; // [-4, 4]
-export const TABLE_HALF_EXTENT = 8; // [-8, 8] (16x16 battlefield)
+export const TABLE_HALF_EXTENT = 11; // [-11, 11] (22x22 battlefield)
 export const SPAWN_SEPARATION = 5.0;
 export const SPAWN_CLEAR_RADIUS = 2.5;
 

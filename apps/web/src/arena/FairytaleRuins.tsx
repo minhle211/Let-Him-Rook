@@ -34,16 +34,16 @@ function rand(seed: number): number {
 
 /** A sparse, irregular scatter of ruins on the terrace around the battlefield (x, z, broken). */
 const PILLAR_SPOTS: Array<[number, number, boolean]> = [
-  [-6.05, -9.2, false],
-  [1.05, -9.05, true],
-  [5.35, -9.3, false],
-  [9.2, -3.1, true],
-  [9.05, 2.3, false],
-  [9.15, 6.95, false],
-  [4.45, 9.2, true],
-  [0.9, 9.1, false],
-  [-9.3, -0.4, false],
-  [-9.1, -5.15, true],
+  [-8.32, -12.20, false],
+  [1.44, -12.05, true],
+  [7.36, -12.30, false],
+  [12.20, -4.26, true],
+  [12.05, 3.16, false],
+  [12.15, 9.56, false],
+  [6.12, 12.20, true],
+  [1.24, 12.10, false],
+  [-12.30, -0.55, false],
+  [-12.10, -7.08, true],
 ];
 
 function buildPillars(): PillarSpec[] {
@@ -60,9 +60,9 @@ function buildPillars(): PillarSpec[] {
 
 /** Toppled column drums lying on the terrace between the standing ruins. */
 const FALLEN_COLUMNS: Array<{ x: number; z: number; rotY: number; length: number }> = [
-  { x: -3.3, z: -9.25, rotY: 0.25, length: 1.6 },
-  { x: 9.25, z: -6.2, rotY: 1.35, length: 1.3 },
-  { x: -9.25, z: 7.3, rotY: 1.75, length: 1.4 },
+  { x: -4.54, z: -12.25, rotY: 0.25, length: 1.6 },
+  { x: 12.25, z: -8.53, rotY: 1.35, length: 1.3 },
+  { x: -12.25, z: 10.04, rotY: 1.75, length: 1.4 },
 ];
 
 /** Horizontal distance from (px, pz) to the segment (ax, az)-(bx, bz). */

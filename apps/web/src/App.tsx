@@ -767,7 +767,7 @@ export const App: React.FC = () => {
       >
         {/* Fairytale twilight: misty blue-violet sky that swallows the far ruins */}
         <color attach="background" args={['#2a3048']} />
-        <fog attach="fog" args={['#2a3048', 16, 38]} />
+        <fog attach="fog" args={['#2a3048', 18, 48]} />
         <ambientLight intensity={0.75} />
         <directionalLight
           position={[6, 12, 6]}
