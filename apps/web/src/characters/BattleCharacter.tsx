@@ -25,6 +25,7 @@ export function BattleCharacter({ mounted, clone = false, armor, trim, cloth, hi
   const legs = useRef<Group>(null);
   const rider = useRef<Group>(null);
   const flash = useRef<Group & { visible: boolean }>(null);
+  const slash = useRef<Group & { visible: boolean }>(null);
   const motion = useRef({ shot: shotCount, active: false, elapsed: 1 });
   const cannon = attacking
     ? shotCount > 0 && shotCount % 3 === 0
@@ -32,7 +33,7 @@ export function BattleCharacter({ mounted, clone = false, armor, trim, cloth, hi
   useFrame((_, delta) => {
     const state = motion.current;
     // A knight starts once on its accepted skill, rather than again on impact.
-    const active = mounted ? windingUp : attacking;
+    const active = mounted ? (windingUp || attacking) : attacking;
     if (shotCount !== state.shot || (active && !state.active)) state.elapsed = 0;
     state.shot = shotCount;
     state.active = active;
@@ -62,6 +63,12 @@ export function BattleCharacter({ mounted, clone = false, armor, trim, cloth, hi
     }
     if (legs.current) legs.current.rotation.x = t < 0.22 ? Math.sin(t * 50) * 0.25 : 0;
     if (flash.current) flash.current.visible = !mounted && t < 0.09;
+    if (slash.current) {
+      slash.current.visible = mounted && t >= 0.20 && t < 0.58;
+      slash.current.rotation.x = (0.35 - t) * 1.5;
+      const s = 0.9 + thrust * 0.3;
+      slash.current.scale.set(s, s, s);
+    }
 
   });
   const metal = hit ? '#ef4444' : armor;
@@ -98,6 +105,12 @@ export function BattleCharacter({ mounted, clone = false, armor, trim, cloth, hi
           <Block at={[0.28, 0.92, -0.3]} size={[0.11, 0.12, 0.16]} color={metal} />
           <mesh position={[0.28, 0.94, -0.46]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.025, 0.025, 1.15, 6]} /><meshStandardMaterial color="#855c35" /></mesh>
           <mesh position={[0.28, 0.94, -1.1]} rotation={[-Math.PI / 2, 0, 0]}><coneGeometry args={[0.075, 0.22, 4]} /><meshStandardMaterial color="#cbd5e1" metalness={0.4} roughness={0.5} /></mesh>
+          <group ref={slash} visible={false} position={[0.28, 0.94, -0.65]}>
+            <mesh rotation={[0, Math.PI / 2, 0]}>
+              <ringGeometry args={[0.45, 0.9, 20, 1, -Math.PI * 0.38, Math.PI * 0.76]} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.85} side={2} depthWrite={false} />
+            </mesh>
+          </group>
           <Block at={[-0.22, 1.15, 0.25]} size={[0.025, 0.65, 0.025]} color={trim} />
           <Block at={[-0.1, 1.4, 0.25]} size={[0.24, 0.16, 0.025]} color={cloth} />
         </> : <>

@@ -2,6 +2,10 @@ export type PlayerColor = 'w' | 'b';
 
 export type PieceClass = 'pawn' | 'rook' | 'knight' | 'bishop' | 'queen' | 'king';
 
+export function isRangedPieceClass(pieceClass: PieceClass): boolean {
+  return pieceClass === 'rook' || pieceClass === 'bishop' || pieceClass === 'queen';
+}
+
 export type PromotionPieceClass = 'queen' | 'rook' | 'bishop' | 'knight';
 
 export type MatchPhase =
@@ -148,6 +152,8 @@ export interface SummonAllyState {
   facingRad: number;
   remainingMs: number;
   nextAttackMs: number;
+  phaseIndex?: number;
+  isMovingAway?: boolean;
 }
 
 export interface DuelSnapshot {
