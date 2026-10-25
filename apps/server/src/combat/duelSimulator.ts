@@ -134,6 +134,7 @@ export function createDuel(
     teleportWindupRemainingMs: 0,
     cooldowns: { primary: 0, secondary: 0 },
     rookShotCounter: 0,
+    summonsUsed: 0,
   };
 
   const defender: FighterState = {
@@ -154,6 +155,7 @@ export function createDuel(
     teleportWindupRemainingMs: 0,
     cooldowns: { primary: 0, secondary: 0 },
     rookShotCounter: 0,
+    summonsUsed: 0,
   };
 
   // Build obstacles from non-dueling board pieces outside SPAWN_CLEAR_RADIUS
@@ -451,46 +453,148 @@ export function applyAbilityIntent(
         return { accepted: false, reason: 'cooldown' };
       }
 
-      // Compute destination: 1.5u in front of opponent along vector from opponent to fighter
-      const fromOppX = fighter.x - opponent.x;
-      const fromOppZ = fighter.z - opponent.z;
-      const dist = Math.hypot(fromOppX, fromOppZ) || 1;
-      const targetDist = CLASS_ABILITY_CONFIG.knight.cleave.targetOffsetDist; // 1.5u
+      const cfg = CLASS_ABILITY_CONFIG.knight.cleave;
+      const fwdX = Math.sin(fighter.facingRad);
+      const fwdZ = -Math.cos(fighter.facingRad);
 
-      const destX = opponent.x + (fromOppX / dist) * targetDist;
-      const destZ = opponent.z + (fromOppZ / dist) * targetDist;
+      // 1. Check if opponent is within the 120° front camera cone and within maxTeleportDist
+      const toOppX = opponent.x - fighter.x;
+      const toOppZ = opponent.z - fighter.z;
+      const distToOpp = Math.hypot(toOppX, toOppZ);
+      const targetConeMinDot = Math.cos(((cfg.targetConeDeg / 2) * Math.PI) / 180);
+      const oppDot =
+        distToOpp > 0.0001
+          ? (toOppX / distToOpp) * fwdX + (toOppZ / distToOpp) * fwdZ
+          : 1;
+      const oppInFrontCone = oppDot >= targetConeMinDot - 1e-6;
 
-      // Validate destination is inside [-7, 7] with fighter radius
-      const clamped = clampToTabletop(destX, destZ, FIGHTER_RADIUS);
-      if (Math.hypot(clamped.x - destX, clamped.z - destZ) > 0.05) {
-        return { accepted: false, reason: 'blocked_or_out_of_range' };
+      const oppOffset = Math.min(distToOpp, cfg.targetOffsetDist); // 1.5u in front of opponent
+      const oppDestX =
+        distToOpp > 0.0001 ? opponent.x - (toOppX / distToOpp) * oppOffset : fighter.x;
+      const oppDestZ =
+        distToOpp > 0.0001 ? opponent.z - (toOppZ / distToOpp) * oppOffset : fighter.z;
+      const oppTeleportDist = Math.hypot(oppDestX - fighter.x, oppDestZ - fighter.z);
+      const oppInRange = oppInFrontCone && oppTeleportDist <= cfg.maxTeleportDist;
+
+      let destX: number;
+      let destZ: number;
+      let pathEndX: number;
+      let pathEndZ: number;
+      let lookTarget: { x: number; z: number } | null;
+
+      if (oppInRange) {
+        destX = oppDestX;
+        destZ = oppDestZ;
+        pathEndX = opponent.x;
+        pathEndZ = opponent.z;
+        lookTarget = { x: opponent.x, z: opponent.z };
+      } else {
+        // Opponent out of range or outside 120° front cone: teleport 3.0u forward in camera direction
+        destX = fighter.x + fwdX * cfg.forwardTeleportDist;
+        destZ = fighter.z + fwdZ * cfg.forwardTeleportDist;
+        pathEndX = destX;
+        pathEndZ = destZ;
+        lookTarget = null;
       }
 
-      // Teleport distance check
-      const teleportDist = Math.hypot(destX - fighter.x, destZ - fighter.z);
-      if (teleportDist > CLASS_ABILITY_CONFIG.knight.cleave.maxTeleportDist) {
-        return { accepted: false, reason: 'blocked_or_out_of_range' };
-      }
+      // 2. Check for blocking obstacles within the 40° front camera cone intersecting the straight-line path
+      const pathDx = pathEndX - fighter.x;
+      const pathDz = pathEndZ - fighter.z;
+      const pathLen = Math.hypot(pathDx, pathDz);
+      const obsConeMinDot = Math.cos(((cfg.obstacleConeDeg / 2) * Math.PI) / 180);
 
-      // Obstacle collision check at destination
-      for (const obs of duel.obstacles) {
-        if (obs.hitsRemaining <= 0) continue;
-        const d = Math.hypot(destX - obs.x, destZ - obs.z);
-        if (d < FIGHTER_RADIUS + obs.radius) {
-          return { accepted: false, reason: 'blocked_or_out_of_range' };
+      let closestBlockingObs: ObstacleState | null = null;
+      let closestBlockingDist = Infinity;
+
+      if (pathLen > 0.0001) {
+        const ux = pathDx / pathLen;
+        const uz = pathDz / pathLen;
+
+        for (const obs of duel.obstacles) {
+          if (obs.hitsRemaining <= 0) continue;
+          const toObsX = obs.x - fighter.x;
+          const toObsZ = obs.z - fighter.z;
+          const obsDist = Math.hypot(toObsX, toObsZ);
+          if (obsDist < 0.0001) continue;
+
+          const obsDot = (toObsX / obsDist) * fwdX + (toObsZ / obsDist) * fwdZ;
+          if (obsDot < obsConeMinDot - 1e-6) continue;
+
+          const proj = toObsX * ux + toObsZ * uz;
+          if (proj <= 0 || proj > pathLen + obs.radius) continue;
+
+          const clampedProj = Math.max(0, Math.min(pathLen, proj));
+          const closestX = fighter.x + ux * clampedProj;
+          const closestZ = fighter.z + uz * clampedProj;
+          const perpDist = Math.hypot(obs.x - closestX, obs.z - closestZ);
+
+          if (perpDist < FIGHTER_RADIUS + obs.radius && obsDist < closestBlockingDist) {
+            closestBlockingDist = obsDist;
+            closestBlockingObs = obs;
+          }
         }
       }
 
-      // Valid: teleport and start windup
-      fighter.x = destX;
-      fighter.z = destZ;
-      fighter.teleportWindupRemainingMs = CLASS_ABILITY_CONFIG.knight.cleave.windupMs;
-      fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.knight.cleave.cooldownMs;
+      if (closestBlockingObs) {
+        const toObsX = closestBlockingObs.x - fighter.x;
+        const toObsZ = closestBlockingObs.z - fighter.z;
+        const obsDist = Math.hypot(toObsX, toObsZ) || 1;
+        const obsOffset = Math.min(obsDist, cfg.targetOffsetDist);
+        destX = closestBlockingObs.x - (toObsX / obsDist) * obsOffset;
+        destZ = closestBlockingObs.z - (toObsZ / obsDist) * obsOffset;
+        lookTarget = { x: closestBlockingObs.x, z: closestBlockingObs.z };
+      }
+
+      // 3. Clamp to tabletop [-7, 7] and resolve any overlap with obstacles or opponent
+      let finalPos = clampToTabletop(destX, destZ, FIGHTER_RADIUS);
+      for (const obs of duel.obstacles) {
+        if (obs.hitsRemaining <= 0) continue;
+        const minDist = FIGHTER_RADIUS + obs.radius;
+        const d = Math.hypot(finalPos.x - obs.x, finalPos.z - obs.z);
+        if (d < minDist) {
+          if (d > 0.0001) {
+            const overlap = minDist - d;
+            finalPos.x += ((finalPos.x - obs.x) / d) * overlap;
+            finalPos.z += ((finalPos.z - obs.z) / d) * overlap;
+          } else {
+            finalPos.x -= fwdX * minDist;
+            finalPos.z -= fwdZ * minDist;
+          }
+        }
+      }
+
+      const minFighterDist = FIGHTER_RADIUS * 2;
+      const oppD = Math.hypot(finalPos.x - opponent.x, finalPos.z - opponent.z);
+      if (oppD < minFighterDist) {
+        if (oppD > 0.0001) {
+          const overlap = minFighterDist - oppD;
+          finalPos.x += ((finalPos.x - opponent.x) / oppD) * overlap;
+          finalPos.z += ((finalPos.z - opponent.z) / oppD) * overlap;
+        } else {
+          finalPos.x -= fwdX * minFighterDist;
+          finalPos.z -= fwdZ * minFighterDist;
+        }
+      }
+
+      finalPos = clampToTabletop(finalPos.x, finalPos.z, FIGHTER_RADIUS);
+
+      // 4. Teleport, face target/obstacle if locked on, and start windup
+      fighter.x = finalPos.x;
+      fighter.z = finalPos.z;
+      if (lookTarget) {
+        const lx = lookTarget.x - fighter.x;
+        const lz = lookTarget.z - fighter.z;
+        if (Math.hypot(lx, lz) > 0.0001) {
+          fighter.facingRad = Math.atan2(lx, -lz);
+        }
+      }
+      fighter.teleportWindupRemainingMs = cfg.windupMs;
+      fighter.cooldowns.primary = now + cfg.cooldownMs;
 
       duel.events.push({
         type: 'teleport',
         timestamp: now,
-        data: { color: fighter.color, x: destX, z: destZ },
+        data: { color: fighter.color, x: fighter.x, z: fighter.z },
       });
 
       return { accepted: true };
@@ -566,17 +670,21 @@ export function applyAbilityIntent(
       if (now < fighter.cooldowns.primary) {
         return { accepted: false, reason: 'cooldown' };
       }
-      if (duel.allies.some(a => a.owner === fighter.color)) {
-        return { accepted: false, reason: 'max_allies_active' };
+      // Summons stack (a new ally doesn't wait for the previous one to die), up to 10 per duel.
+      if (fighter.summonsUsed >= CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel) {
+        return { accepted: false, reason: 'summon_limit_reached' };
       }
 
       fighter.cooldowns.primary = now + CLASS_ABILITY_CONFIG.king.summon.cooldownMs;
+      const summonIndex = fighter.summonsUsed++;
 
       const classes: PieceClass[] = ['pawn', 'rook', 'knight', 'bishop', 'queen'];
       const randomClass = classes[Math.floor(Math.random() * classes.length)];
 
-      // Spawn ally slightly to the side of King
-      const sideAngle = fighter.facingRad + Math.PI / 2;
+      // Spawn beside the King, alternating sides and fanning out so stacked allies don't overlap
+      const side = summonIndex % 2 === 0 ? 1 : -1;
+      const fan = Math.floor(summonIndex / 2) * 0.35;
+      const sideAngle = fighter.facingRad + side * (Math.PI / 2 - fan);
       const spawnX = fighter.x + Math.sin(sideAngle) * 1.5;
       const spawnZ = fighter.z - Math.cos(sideAngle) * 1.5;
       const clamped = clampToTabletop(spawnX, spawnZ, FIGHTER_RADIUS);
@@ -670,42 +778,131 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
         fighter.teleportWindupRemainingMs - dtMs
       );
       if (fighter.teleportWindupRemainingMs === 0) {
-        // Execute windup cleave damage
-        const dist = Math.hypot(opponent.x - fighter.x, opponent.z - fighter.z);
-        if (dist <= CLASS_ABILITY_CONFIG.knight.cleave.slashArcRadius) {
-          if (opponent.isParrying) {
-            duel.events.push({
-              type: 'parry_blocked',
-              timestamp: now,
-              data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
-            });
-          } else {
-            opponent.hp = applyFighterDamage(
-              opponent,
-              CLASS_ABILITY_CONFIG.knight.cleave.damage,
-              duel.sandboxOptions?.godMode
-            );
-            duel.events.push({
-              type: 'melee_hit',
-              timestamp: now,
-              data: {
-                target: opponent.color,
-                damage: CLASS_ABILITY_CONFIG.knight.cleave.damage,
-                remainingHp: opponent.hp,
-              },
-            });
-          }
+        const cleaveCfg = CLASS_ABILITY_CONFIG.knight.cleave;
+        const facingX = Math.sin(fighter.facingRad);
+        const facingZ = -Math.cos(fighter.facingRad);
+        const minSlashDot = Math.cos(((cleaveCfg.slashArcDeg / 2) * Math.PI) / 180);
 
-          // Damage enemy summoned allies in slash range
-          for (const ally of duel.allies) {
-            if (ally.owner === fighter.color) continue;
-            const dist = Math.hypot(ally.x - fighter.x, ally.z - fighter.z);
-            if (dist <= CLASS_ABILITY_CONFIG.knight.cleave.slashArcRadius) {
-              ally.hp = Math.max(0, ally.hp - CLASS_ABILITY_CONFIG.knight.cleave.damage);
+        // Snapshot active obstacles before cleave damage so first-row obstacles block anything behind them
+        const activeObstaclesBeforeCleave = duel.obstacles
+          .filter(o => o.hitsRemaining > 0)
+          .map(o => ({ id: o.id, x: o.x, z: o.z, radius: o.radius }));
+
+        const isInCleaveArc = (tx: number, tz: number): { inArc: boolean; dist: number } => {
+          const dx = tx - fighter.x;
+          const dz = tz - fighter.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist > cleaveCfg.slashArcRadius) return { inArc: false, dist };
+          if (dist < 0.0001) return { inArc: true, dist };
+          const dot = (dx / dist) * facingX + (dz / dist) * facingZ;
+          return { inArc: dot >= minSlashDot - 1e-6, dist };
+        };
+
+        const isOccludedByObstacle = (
+          tx: number,
+          tz: number,
+          distT: number,
+          selfObstacleId?: string
+        ): boolean => {
+          if (distT < 0.0001) return false;
+          const ux = (tx - fighter.x) / distT;
+          const uz = (tz - fighter.z) / distT;
+
+          for (const obs of activeObstaclesBeforeCleave) {
+            if (selfObstacleId && obs.id === selfObstacleId) continue;
+            const toOx = obs.x - fighter.x;
+            const toOz = obs.z - fighter.z;
+            const distO = Math.hypot(toOx, toOz);
+            if (distO >= distT - 1e-4) continue;
+
+            const proj = toOx * ux + toOz * uz;
+            if (proj <= 0 || proj >= distT) continue;
+
+            const perpDist = Math.hypot(toOx - ux * proj, toOz - uz * proj);
+            if (perpDist < obs.radius) {
+              return true;
             }
           }
-          duel.allies = duel.allies.filter((a) => a.hp > 0);
+          return false;
+        };
+
+        type CleaveCandidate =
+          | { kind: 'opponent'; dist: number }
+          | { kind: 'ally'; dist: number; ally: SummonAllyState }
+          | { kind: 'obstacle'; dist: number; obs: ObstacleState };
+
+        const candidates: CleaveCandidate[] = [];
+
+        const oppCheck = isInCleaveArc(opponent.x, opponent.z);
+        if (oppCheck.inArc && !isOccludedByObstacle(opponent.x, opponent.z, oppCheck.dist)) {
+          candidates.push({ kind: 'opponent', dist: oppCheck.dist });
         }
+
+        for (const ally of duel.allies) {
+          if (ally.owner === fighter.color || ally.hp <= 0) continue;
+          const allyCheck = isInCleaveArc(ally.x, ally.z);
+          if (allyCheck.inArc && !isOccludedByObstacle(ally.x, ally.z, allyCheck.dist)) {
+            candidates.push({ kind: 'ally', dist: allyCheck.dist, ally });
+          }
+        }
+
+        for (const obs of duel.obstacles) {
+          if (obs.hitsRemaining <= 0) continue;
+          const obsCheck = isInCleaveArc(obs.x, obs.z);
+          if (obsCheck.inArc && !isOccludedByObstacle(obs.x, obs.z, obsCheck.dist, obs.id)) {
+            candidates.push({ kind: 'obstacle', dist: obsCheck.dist, obs });
+          }
+        }
+
+        // Prioritize closest entities first and cap at maxTargets (4 identities)
+        candidates.sort((a, b) => a.dist - b.dist);
+        const hitTargets = candidates.slice(0, cleaveCfg.maxTargets);
+
+        for (const target of hitTargets) {
+          if (target.kind === 'opponent') {
+            if (opponent.isParrying) {
+              duel.events.push({
+                type: 'parry_blocked',
+                timestamp: now,
+                data: { defender: opponent.color, attacker: fighter.color, damage: 0 },
+              });
+            } else {
+              opponent.hp = applyFighterDamage(
+                opponent,
+                cleaveCfg.damage,
+                duel.sandboxOptions?.godMode
+              );
+              duel.events.push({
+                type: 'melee_hit',
+                timestamp: now,
+                data: {
+                  target: opponent.color,
+                  damage: cleaveCfg.damage,
+                  remainingHp: opponent.hp,
+                },
+              });
+            }
+          } else if (target.kind === 'ally') {
+            target.ally.hp = Math.max(0, target.ally.hp - cleaveCfg.damage);
+          } else if (target.kind === 'obstacle') {
+            const obs = target.obs;
+            obs.hitsRemaining = Math.max(0, obs.hitsRemaining - 1);
+            duel.events.push({
+              type: 'obstacle_damage',
+              timestamp: now,
+              data: { obstacleId: obs.id, hitsRemaining: obs.hitsRemaining },
+            });
+            if (obs.hitsRemaining <= 0) {
+              duel.events.push({
+                type: 'obstacle_broken',
+                timestamp: now,
+                data: { obstacleId: obs.id },
+              });
+            }
+          }
+        }
+
+        duel.allies = duel.allies.filter((a) => a.hp > 0);
       }
     }
   }
@@ -805,7 +1002,7 @@ export function stepDuel(duel: DuelSimulation, now: number): void {
       ally.z = clamped.z;
     }
 
-    // Ally attacks every 2.0s for 50% base damage
+    // Ally attacks every 2.0s for 75% of its piece's normal damage
     if (now >= ally.nextAttackMs) {
       ally.nextAttackMs = now + CLASS_ABILITY_CONFIG.king.summon.attackIntervalMs;
       const baseDmg =

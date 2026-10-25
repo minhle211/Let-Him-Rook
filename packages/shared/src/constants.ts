@@ -61,11 +61,15 @@ export const CLASS_ABILITY_CONFIG = {
   knight: {
     cleave: {
       maxTeleportDist: 4.5,
-      targetOffsetDist: 1.5,
+      forwardTeleportDist: 3.0,
+      targetConeDeg: 120,
+      obstacleConeDeg: 40,
+      targetOffsetDist: 1.2,
       windupMs: 350,
       damage: 24,
-      slashArcRadius: 2.5,
-      slashArcDeg: 140,
+      slashArcRadius: 1.75,
+      slashArcDeg: 100,
+      maxTargets: 4,
       cooldownMs: 4500,
     },
   },
@@ -100,12 +104,12 @@ export const CLASS_ABILITY_CONFIG = {
   king: {
     summon: {
       cooldownMs: 6000,
-      maxAllies: 1,
+      maxSummonsPerDuel: 10, // summons stack (no wait for the previous ally to die); 10 per duel
       allyHp: 1,
       durationMs: 12000,
       attackIntervalMs: 2000,
       speed: 2.2,
-      baseDamageMultiplier: 0.5,
+      baseDamageMultiplier: 0.75, // ally hits for 75% of its piece's normal damage
     },
   },
 } as const;

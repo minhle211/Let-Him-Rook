@@ -131,7 +131,7 @@ Every fighter enters each duel with **100 HP** and moves at **3.5 units/sec** wh
 | **♘ Knight** | **Cross forearms** at chest, then **rapidly separate** horizontally | **Teleport Cleave**: Teleports up to `4.5u` to land `1.5u` in front of opponent + `0.35s` windup + `24 dmg` slash (`2.5u` radius, `4.5s` CD). Fails safely without consuming CD if blocked or out of range |
 | **♗ Bishop** | **Cock right hand** near right shoulder, then **thrust forward** | **Ice Bolt**: `14 dmg` frost projectile (`8 u/s`, `2.5s` CD). Opponent hit applies `4.0s` chill (`40%` slow + `3 dmg/s` DoT). Obstacle hit freezes obstacle for `4.0s` and spawns a `1.5u` ice puddle (`40%` slow + `3 dmg/s` DoT) |
 | **♕ Queen** | **Raise both open palms** to shoulder height and **push forward** | **Seeking Volley**: Fires `3` homing arcane orbs (`-18°, 0°, +18°`, `3 × 9 = 27 dmg`, `7 u/s`, `3.5s` CD). Each orb deals `1` hit to obstacles, breaking a 3-hit obstacle in one full volley |
-| **♔ King** | **Clasp both hands** at chest center and **hold for 0.4s** | **Royal Summon**: Spawns `1` random ally (`Pawn`, `Rook`, `Knight`, `Bishop`, or `Queen`, max `1` active, `1 HP`, `12s` duration, `6.0s` CD) that approaches the enemy and attacks every `2.0s` for `50%` of that class's base damage |
+| **♔ King** | **Clasp both hands** at chest center and **hold for 0.4s** | **Royal Summon**: Spawns `1` random ally (`Pawn`, `Rook`, `Knight`, `Bishop`, or `Queen`; `1 HP`, `12s` duration, `6.0s` CD). Summons **stack** — a new ally doesn't wait for the previous one to die — up to `10` summons per duel. Each ally approaches the enemy and attacks every `2.0s` for `75%` of that class's base damage |
 
 ---
 

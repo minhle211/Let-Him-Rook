@@ -88,6 +88,8 @@ export interface FighterState {
     secondary: number; // e.g. parry
   };
   rookShotCounter: number;
+  /** King: summons used this duel (capped at CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel). */
+  summonsUsed: number;
 }
 
 export type ProjectileType =

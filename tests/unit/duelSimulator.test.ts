@@ -189,7 +189,7 @@ test('Duel Simulator: Rook fires shot and every 3rd shot is Cannon Bomb', () => 
   assert.equal(duel.projectiles[2].splashRadius, CLASS_ABILITY_CONFIG.rook.cannonBomb.splashRadius);
 });
 
-test('Duel Simulator: Knight cleave teleport and range/obstacle validation', () => {
+test('Duel Simulator: Knight cleave teleport, 120-deg camera cone, 3u forward fallback, and 40-deg obstacle interception', () => {
   const pending = {
     from: 'b1' as const,
     to: 'c3' as const,
@@ -197,30 +197,215 @@ test('Duel Simulator: Knight cleave teleport and range/obstacle validation', () 
     attackerClass: 'knight' as const,
     defenderClass: 'knight' as const,
   };
-  const duel = createDuel(DUMMY_FEN, pending, 1000);
 
-  // Place opponent too far (> 7 units)
-  duel.attacker.x = -4.0;
-  duel.defender.x = 4.0;
-  const failRes = applyAbilityIntent(duel, 'w', 'knight_cleave', undefined, 1000);
-  assert.equal(failRes.accepted, false);
-  assert.equal(failRes.reason, 'blocked_or_out_of_range');
-  assert.equal(duel.attacker.cooldowns.primary, 0, 'Failed cleave must NOT consume cooldown');
+  // 1. Opponent out of range (> 4.5u teleport dist): teleports 3.0u forward in camera direction
+  const duelFar = createDuel(DUMMY_FEN, pending, 1000);
+  duelFar.obstacles = [];
+  duelFar.attacker.x = 0;
+  duelFar.attacker.z = 3.0;
+  duelFar.attacker.facingRad = 0; // facing -Z
+  duelFar.defender.x = 0;
+  duelFar.defender.z = -5.0; // 8.0u away
 
-  // Place opponent within reach (3.0 units)
-  duel.attacker.x = 0;
-  duel.attacker.z = 0;
-  duel.defender.x = 0;
-  duel.defender.z = -3.0;
+  const farRes = applyAbilityIntent(duelFar, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(farRes.accepted, true);
+  assert.ok(Math.abs(duelFar.attacker.x - 0) < 0.01);
+  assert.ok(Math.abs(duelFar.attacker.z - 0) < 0.01, 'Should teleport 3.0u forward from z=3.0 to z=0.0');
+  assert.ok(duelFar.attacker.teleportWindupRemainingMs > 0);
 
-  const passRes = applyAbilityIntent(duel, 'w', 'knight_cleave', undefined, 1000);
+  // 2. Opponent close (3.0u) but outside 120-deg front cone (e.g. behind knight): teleports 3.0u forward in camera direction
+  const duelBehind = createDuel(DUMMY_FEN, pending, 1000);
+  duelBehind.obstacles = [];
+  duelBehind.attacker.x = 0;
+  duelBehind.attacker.z = 0;
+  duelBehind.attacker.facingRad = 0; // facing -Z
+  duelBehind.defender.x = 0;
+  duelBehind.defender.z = 2.5; // behind knight (+Z)
+
+  const behindRes = applyAbilityIntent(duelBehind, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(behindRes.accepted, true);
+  assert.ok(Math.abs(duelBehind.attacker.x - 0) < 0.01);
+  assert.ok(Math.abs(duelBehind.attacker.z - -3.0) < 0.01, 'Should teleport 3.0u forward along camera (-Z) instead of backward to opponent');
+  stepDuel(duelBehind, 1400);
+  assert.equal(duelBehind.defender.hp, FIGHTER_MAX_HP, 'Opponent behind knight should not take cleave damage');
+
+  // 3. Opponent within 120-deg front cone (e.g. 45 deg off-center) and within range: teleports 1.5u in front of opponent, faces them, and cleaves
+  const duelInCone = createDuel(DUMMY_FEN, pending, 1000);
+  duelInCone.obstacles = [];
+  duelInCone.attacker.x = 0;
+  duelInCone.attacker.z = 0;
+  duelInCone.attacker.facingRad = 0; // facing -Z
+  duelInCone.defender.x = 2.0;
+  duelInCone.defender.z = -2.0; // 45 deg to the front-right, dist ~2.83u
+
+  const passRes = applyAbilityIntent(duelInCone, 'w', 'knight_cleave', undefined, 1000);
   assert.equal(passRes.accepted, true);
-  assert.ok(duel.attacker.teleportWindupRemainingMs > 0, 'Should start windup');
+  assert.ok(duelInCone.attacker.teleportWindupRemainingMs > 0, 'Should start windup');
+  const expectedFacing = Math.atan2(
+    duelInCone.defender.x - duelInCone.attacker.x,
+    -(duelInCone.defender.z - duelInCone.attacker.z)
+  );
+  assert.ok(Math.abs(duelInCone.attacker.facingRad - expectedFacing) < 0.01, 'Should rotate facingRad toward opponent');
 
   // Step through 350ms windup
-  stepDuel(duel, 1000 + 400);
-  assert.equal(duel.attacker.teleportWindupRemainingMs, 0);
-  assert.equal(duel.defender.hp, FIGHTER_MAX_HP - CLASS_ABILITY_CONFIG.knight.cleave.damage);
+  stepDuel(duelInCone, 1000 + 400);
+  assert.equal(duelInCone.attacker.teleportWindupRemainingMs, 0);
+  assert.equal(duelInCone.defender.hp, FIGHTER_MAX_HP - CLASS_ABILITY_CONFIG.knight.cleave.damage);
+
+  // 4. Multiple obstacles blocking in the 40-deg front cone: teleports to the closest blocking obstacle and cleaves it
+  const duelObs = createDuel(DUMMY_FEN, pending, 1000);
+  duelObs.attacker.x = 0;
+  duelObs.attacker.z = 3.0;
+  duelObs.attacker.facingRad = 0; // facing -Z
+  duelObs.defender.x = 0;
+  duelObs.defender.z = -4.0;
+  duelObs.obstacles = [
+    {
+      id: 'obs_near',
+      type: 'piece',
+      x: 0.1,
+      z: 1.0, // 2.0u in front of knight, well within 40-deg cone and blocking path
+      radius: 0.42,
+      hitsRemaining: 3,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+    {
+      id: 'obs_far',
+      type: 'piece',
+      x: -0.1,
+      z: 0.2, // 2.8u in front of knight, also blocking path but farther
+      radius: 0.42,
+      hitsRemaining: 3,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+  ];
+
+  const obsRes = applyAbilityIntent(duelObs, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(obsRes.accepted, true);
+  const distToNearObs = Math.hypot(
+    duelObs.attacker.x - duelObs.obstacles[0].x,
+    duelObs.attacker.z - duelObs.obstacles[0].z
+  );
+  assert.ok(
+    Math.abs(distToNearObs - CLASS_ABILITY_CONFIG.knight.cleave.targetOffsetDist) < 0.05,
+    `Knight should land 1.5u in front of closest blocking obstacle (got ${distToNearObs})`
+  );
+
+  // Complete windup: cleave damages obstacle in front arc
+  stepDuel(duelObs, 1000 + 400);
+  assert.equal(duelObs.obstacles[0].hitsRemaining, 2, 'Closest obstacle should take 1 cleave hit');
+  assert.ok(duelObs.events.some(e => e.type === 'obstacle_damage' && e.data.obstacleId === 'obs_near'));
+
+  // 5. Obstacle outside the 40-deg front cone (> 20 deg off-center) is ignored when locking onto opponent in 120-deg cone
+  const duelObsOutside40 = createDuel(DUMMY_FEN, pending, 1000);
+  duelObsOutside40.attacker.x = 0;
+  duelObsOutside40.attacker.z = 0;
+  duelObsOutside40.attacker.facingRad = 0; // facing -Z
+  // Place opponent at 45 deg (within 120-deg cone)
+  duelObsOutside40.defender.x = 3.0;
+  duelObsOutside40.defender.z = -3.0;
+  // Place obstacle along that 45-deg line (outside the 40-deg front camera cone!)
+  duelObsOutside40.obstacles = [
+    {
+      id: 'obs_45deg',
+      type: 'piece',
+      x: 1.2,
+      z: -1.2,
+      radius: 0.42,
+      hitsRemaining: 1,
+      maxHits: 3,
+      frozenRemainingMs: 0,
+    },
+  ];
+  const resOutside40 = applyAbilityIntent(duelObsOutside40, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(resOutside40.accepted, true);
+  const distToOppAfter = Math.hypot(
+    duelObsOutside40.attacker.x - duelObsOutside40.defender.x,
+    duelObsOutside40.attacker.z - duelObsOutside40.defender.z
+  );
+  assert.ok(
+    Math.abs(distToOppAfter - CLASS_ABILITY_CONFIG.knight.cleave.targetOffsetDist) < 0.05,
+    'Obstacle outside 40-deg front camera cone should not intercept teleport to opponent'
+  );
+
+  // 6. Forward 3u teleport near tabletop edge clamps safely within [-7, 7] and never fails
+  const duelEdge = createDuel(DUMMY_FEN, pending, 1000);
+  duelEdge.obstacles = [];
+  duelEdge.attacker.x = 0;
+  duelEdge.attacker.z = -5.5;
+  duelEdge.attacker.facingRad = 0; // facing -Z toward z = -7 border
+  duelEdge.defender.x = 0;
+  duelEdge.defender.z = 5.0; // behind knight
+
+  const edgeRes = applyAbilityIntent(duelEdge, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(edgeRes.accepted, true);
+  assert.ok(duelEdge.attacker.z >= -TABLE_HALF_EXTENT, 'Must clamp within tabletop boundary');
+
+  // 7. Two rows of obstacles + opponent standing behind obstacle: only first row is damaged, second row and shielded opponent take 0 damage
+  const duelTwoRows = createDuel(DUMMY_FEN, pending, 1000);
+  duelTwoRows.attacker.x = 0;
+  duelTwoRows.attacker.z = 3.0;
+  duelTwoRows.attacker.facingRad = 0; // facing -Z
+  // Opponent stands right behind the first row at z = 0.0
+  duelTwoRows.defender.x = 0;
+  duelTwoRows.defender.z = 0.0;
+  duelTwoRows.obstacles = [
+    // First row at z = 1.0
+    { id: 'row1_left', type: 'piece', x: -1.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row1_mid', type: 'piece', x: 0.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row1_right', type: 'piece', x: 1.0, z: 1.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    // Second row at z = 0.0 (1 square behind first row)
+    { id: 'row2_left', type: 'piece', x: -1.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row2_mid', type: 'piece', x: 0.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'row2_right', type: 'piece', x: 1.0, z: 0.0, radius: 0.42, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+  ];
+
+  const twoRowRes = applyAbilityIntent(duelTwoRows, 'w', 'knight_cleave', undefined, 1000);
+  assert.equal(twoRowRes.accepted, true);
+  stepDuel(duelTwoRows, 1400);
+
+  // First row takes 1 hit each
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_mid')?.hitsRemaining, 2, 'First row center must be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_left')?.hitsRemaining, 2, 'First row left must be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row1_right')?.hitsRemaining, 2, 'First row right must be damaged');
+
+  // Second row takes 0 hits
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_mid')?.hitsRemaining, 3, 'Second row center must NOT be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_left')?.hitsRemaining, 3, 'Second row left must NOT be damaged');
+  assert.equal(duelTwoRows.obstacles.find(o => o.id === 'row2_right')?.hitsRemaining, 3, 'Second row right must NOT be damaged');
+
+  // Opponent standing behind first row obstacle takes 0 damage
+  assert.equal(duelTwoRows.defender.hp, FIGHTER_MAX_HP, 'Opponent behind obstacle must NOT take cleave damage');
+
+  // 8. Max 4 identities cap: when > 4 unoccluded identities are in the cleave arc, at most 4 take damage
+  const duelCap = createDuel(DUMMY_FEN, pending, 1000);
+  duelCap.attacker.x = 0;
+  duelCap.attacker.z = 2.2;
+  duelCap.attacker.facingRad = 0; // facing -Z
+  duelCap.defender.x = 0;
+  duelCap.defender.z = -5.0; // out of cleave arc
+  // Place 6 obstacles fanned across the front arc at distance ~1.2u - 1.6u without occluding each other
+  duelCap.obstacles = [
+    { id: 'c1', type: 'piece', x: 0.0, z: 1.0, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c2', type: 'piece', x: -0.45, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c3', type: 'piece', x: 0.45, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c4', type: 'piece', x: -0.9, z: 0.9, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c5', type: 'piece', x: 0.9, z: 0.9, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+    { id: 'c6', type: 'piece', x: -1.15, z: 0.95, radius: 0.2, hitsRemaining: 3, maxHits: 3, frozenRemainingMs: 0 },
+  ];
+
+  // Start windup directly at current position and step
+  duelCap.attacker.teleportWindupRemainingMs = CLASS_ABILITY_CONFIG.knight.cleave.windupMs;
+  stepDuel(duelCap, 1400);
+
+  const damagedCount = duelCap.obstacles.filter(o => o.hitsRemaining < 3).length;
+  assert.equal(
+    damagedCount,
+    CLASS_ABILITY_CONFIG.knight.cleave.maxTargets,
+    `Cleave must damage at most ${CLASS_ABILITY_CONFIG.knight.cleave.maxTargets} identities (got ${damagedCount})`
+  );
 });
 
 test('Duel Simulator: Bishop Ice Bolt freezes obstacle and creates 1.5u ice hazard', () => {
@@ -300,10 +485,11 @@ test('Duel Simulator: King summons 1-HP ally that approaches and attacks enemy',
   assert.equal(duel.allies.length, 1);
   assert.equal(duel.allies[0].hp, 1);
 
-  // Cannot summon second ally while first is active
-  const secondRes = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 7500);
-  assert.equal(secondRes.accepted, false);
-  assert.equal(secondRes.reason, 'max_allies_active');
+  // A second summon only waits for the cooldown, not for the first ally to die
+  const tooSoon = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 2000);
+  assert.equal(tooSoon.accepted, false);
+  assert.equal(tooSoon.reason, 'cooldown');
+  duel.allies = duel.allies.slice(0, 1); // keep the scenario below to one ally
 
   // Step simulation for 2.5 seconds: ally approaches and attacks enemy
   const enemyHpBefore = duel.defender.hp;
@@ -414,4 +600,60 @@ test('Pawn swings emit visuals on misses and blocks, but not rejected cooldown a
   assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 2);
   assert.ok(duel.events.some(e => e.type === 'parry_blocked'));
   assert.equal(duel.defender.hp, initialHp);
+});
+
+const kingVsPawn = () =>
+  createDuel(
+    DUMMY_FEN,
+    { from: 'e1' as const, to: 'e8' as const, attackerColor: 'w' as const, attackerClass: 'king' as const, defenderClass: 'pawn' as const },
+    1000
+  );
+const SUMMON_CD = CLASS_ABILITY_CONFIG.king.summon.cooldownMs;
+
+test('Duel Simulator: King summons stack (no waiting for the previous ally to die), each with 1 HP', () => {
+  const duel = kingVsPawn();
+  for (let i = 0; i < 3; i++) {
+    const res = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + i * SUMMON_CD);
+    assert.equal(res.accepted, true, `summon ${i + 1}`);
+  }
+  assert.equal(duel.allies.length, 3, 'three allies alive at once');
+  assert.ok(duel.allies.every(a => a.hp === 1 && a.owner === 'w'));
+  assert.equal(duel.attacker.summonsUsed, 3);
+  const spots = new Set(duel.allies.map(a => `${a.x.toFixed(2)},${a.z.toFixed(2)}`));
+  assert.equal(spots.size, 3, 'stacked allies spawn in different spots');
+});
+
+test('Duel Simulator: King is capped at 10 summons per duel', () => {
+  const duel = kingVsPawn();
+  for (let i = 0; i < 10; i++) {
+    assert.equal(applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + i * SUMMON_CD).accepted, true, `summon ${i + 1}`);
+  }
+  const eleventh = applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000 + 10 * SUMMON_CD);
+  assert.equal(eleventh.accepted, false);
+  assert.equal(eleventh.reason, 'summon_limit_reached');
+  assert.equal(duel.attacker.summonsUsed, 10);
+  assert.equal(getDuelSnapshot(duel).attacker.summonsUsed, 10, 'count is visible to the HUD');
+});
+
+test("Duel Simulator: each summoned ally hits for 75% of its piece's damage", () => {
+  const base: Record<string, number> = {
+    pawn: CLASS_ABILITY_CONFIG.pawn.sweep.damage,
+    rook: CLASS_ABILITY_CONFIG.rook.shot.damage,
+    knight: CLASS_ABILITY_CONFIG.knight.cleave.damage,
+    bishop: CLASS_ABILITY_CONFIG.bishop.iceBolt.damage,
+    queen: CLASS_ABILITY_CONFIG.queen.volley.damagePerOrb * 3,
+  };
+  assert.equal(CLASS_ABILITY_CONFIG.king.summon.baseDamageMultiplier, 0.75);
+  const seen = new Set<string>();
+  for (let attempt = 0; attempt < 60 && seen.size < 5; attempt++) {
+    const duel = kingVsPawn();
+    applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000);
+    const ally = duel.allies[0];
+    const before = duel.defender.hp;
+    let t = 1000;
+    while (duel.defender.hp === before && t < 4000) stepDuel(duel, (t += 50));
+    assert.equal(before - duel.defender.hp, base[ally.pieceClass] * 0.75, `${ally.pieceClass} ally damage`);
+    seen.add(ally.pieceClass);
+  }
+  assert.equal(seen.size, 5, 'checked every summonable piece');
 });

@@ -5,6 +5,7 @@ import type {
   PieceClass,
   PlayerColor,
 } from '@let-him-rook/shared';
+import { CLASS_ABILITY_CONFIG } from '@let-him-rook/shared';
 import type { VisionFrameData } from '../vision/visionManager.ts';
 import type { CameraTurnIntent } from '../gestures/combatGestures.ts';
 import { buildInviteLink, copyText } from '../networking/invite.ts';
@@ -58,7 +59,7 @@ const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; 
   },
   king: {
     title: '♔ KING',
-    gesture: 'Hold closed right fist at chest center for 0.4s to Summon a random 1-HP Ally',
+    gesture: 'Hold closed right fist at chest center for 0.4s to Summon a random 1-HP Ally (75% damage, stacks, 10 per duel)',
     primaryAbility: 'king_summon',
   },
 };
@@ -101,9 +102,13 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   useEffect(() => {
     if (!showMiniCam) return;
     let animId: number | null = null;
+    let lastDrawAt = 0;
 
-    const renderMini = () => {
+    const renderMini = (now: number) => {
       animId = requestAnimationFrame(renderMini);
+      // The preview is small; drawing it at 30 FPS halves canvas/video uploads.
+      if (now - lastDrawAt < 1000 / 30) return;
+      lastDrawAt = now;
       const canvas = miniCanvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -738,6 +743,12 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                   {duel.attacker.pieceClass === 'pawn' && (
                     <span>Parry: {duel.attacker.isParrying ? '🛡️ HELD' : 'Ready'}</span>
                   )}
+                  {duel.attacker.pieceClass === 'king' && (
+                    <span>
+                      Summons: {CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel - (duel.attacker.summonsUsed ?? 0)}/
+                      {CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel} left
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -820,6 +831,12 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
                   )}
                   {duel.defender.pieceClass === 'pawn' && (
                     <span>Parry: {duel.defender.isParrying ? '🛡️ HELD' : 'Ready'}</span>
+                  )}
+                  {duel.defender.pieceClass === 'king' && (
+                    <span>
+                      Summons: {CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel - (duel.defender.summonsUsed ?? 0)}/
+                      {CLASS_ABILITY_CONFIG.king.summon.maxSummonsPerDuel} left
+                    </span>
                   )}
                 </div>
               </div>
