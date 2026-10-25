@@ -9,6 +9,10 @@ import { CLASS_ABILITY_CONFIG } from '@let-him-rook/shared';
 import type { VisionFrameData } from '../vision/visionManager.ts';
 import type { CameraTurnIntent } from '../gestures/combatGestures.ts';
 import { buildInviteLink, copyText } from '../networking/invite.ts';
+import type { FightRecord } from '../review/fightReview.ts';
+import { FightReviewPanel } from './FightReviewPanel.tsx';
+
+const AI_ADVICE_KEY = 'rook_ai_advice_enabled';
 
 interface MatchHUDProps {
   snapshot: MatchSnapshot | null;
@@ -22,6 +26,12 @@ interface MatchHUDProps {
   onOpenCalibration?: () => void;
   onLeaveRoom?: () => void;
   aiAdviceText?: string | null;
+  onDismissAdvice?: () => void;
+  fightReview?: FightRecord | null;
+  fightJournal?: FightRecord[];
+  reviewOpen?: boolean;
+  onToggleReview?: () => void;
+  onDismissReview?: () => void;
   toast?: { message: string; isError: boolean } | null;
   onToggleSandbox?: () => void;
   isSandboxOpen?: boolean;
@@ -76,6 +86,12 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   onOpenCalibration,
   onLeaveRoom,
   aiAdviceText,
+  onDismissAdvice,
+  fightReview = null,
+  fightJournal = [],
+  reviewOpen = false,
+  onToggleReview,
+  onDismissReview,
   toast,
   onToggleSandbox,
   isSandboxOpen,
@@ -85,6 +101,14 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   connected = true,
 }) => {
   const [showMiniCam, setShowMiniCam] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(AI_ADVICE_KEY) !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const [hiddenAdvice, setHiddenAdvice] = useState<string | null>(null);
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
@@ -227,6 +251,24 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
       setCopiedInvite(true);
       setTimeout(() => setCopiedInvite(false), 1800);
     }
+  };
+
+  const setAdviceEnabled = (next: boolean) => {
+    setAiEnabled(next);
+    try {
+      localStorage.setItem(AI_ADVICE_KEY, next ? 'on' : 'off');
+    } catch {
+      // Preference is optional if the browser blocks storage.
+    }
+    if (!next) onDismissAdvice?.();
+  };
+
+  const handleAdviceClick = () => {
+    if (!aiEnabled) {
+      setAdviceEnabled(true);
+      return;
+    }
+    onRequestAdvice?.();
   };
 
   const handleCopyRoom = () => {
@@ -383,11 +425,11 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
           )}
 
           <button
-            onClick={onRequestAdvice}
+            onClick={handleAdviceClick}
             style={{
               backgroundColor: '#1e293b',
-              color: '#38bdf8',
-              border: '1px solid #0284c7',
+              color: aiEnabled ? '#38bdf8' : '#94a3b8',
+              border: `1px solid ${aiEnabled ? '#0284c7' : '#475569'}`,
               padding: '0.45rem 0.75rem',
               borderRadius: 8,
               fontSize: '0.8rem',
@@ -395,7 +437,41 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
               cursor: 'pointer',
             }}
           >
-            💡 AI Advice
+            {aiEnabled ? '💡 AI Advice' : 'AI Advice Off'}
+          </button>
+          {aiEnabled && (
+            <button
+              onClick={() => setAdviceEnabled(false)}
+              title="Stop showing AI advice"
+              style={{
+                backgroundColor: '#1e293b',
+                color: '#94a3b8',
+                border: '1px solid #475569',
+                padding: '0.45rem 0.65rem',
+                borderRadius: 8,
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Turn off
+            </button>
+          )}
+
+          <button
+            onClick={onToggleReview}
+            style={{
+              backgroundColor: reviewOpen ? '#92400e' : '#1e293b',
+              color: '#fde68a',
+              border: '1px solid #b45309',
+              padding: '0.45rem 0.75rem',
+              borderRadius: 8,
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Fight notes{fightJournal.length ? ` (${fightJournal.length})` : ''}
           </button>
 
           {onLeaveRoom && (
@@ -588,25 +664,6 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
           width: '100%',
         }}
       >
-        {/* AI Advice Banner */}
-        {aiAdviceText && (
-          <div
-            style={{
-              maxWidth: 620,
-              backgroundColor: 'rgba(15, 23, 42, 0.95)',
-              border: '1px solid #38bdf8',
-              borderRadius: 10,
-              padding: '0.7rem 1.1rem',
-              color: '#e0f2fe',
-              fontSize: '0.84rem',
-              lineHeight: 1.4,
-              pointerEvents: 'auto',
-            }}
-          >
-            <strong>Tactical Advice:</strong> {aiAdviceText}
-          </div>
-        )}
-
         {/* Action Toast Cue */}
         {toast && (
           <div
@@ -981,6 +1038,73 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             );
           })()}
         </div>
+      )}
+
+      {aiEnabled && aiAdviceText && aiAdviceText !== hiddenAdvice && (
+        <aside
+          style={{
+            position: 'fixed',
+            top: 84,
+            left: 16,
+            width: 300,
+            maxHeight: 'min(420px, calc(100vh - 280px))',
+            overflow: 'auto',
+            zIndex: 42,
+            pointerEvents: 'auto',
+            background: 'rgba(15, 23, 42, 0.78)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(56, 189, 248, 0.75)',
+            borderRadius: 12,
+            padding: '0.7rem 0.8rem',
+            color: '#e0f2fe',
+            boxShadow: '0 10px 28px rgba(0,0,0,0.28)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <strong style={{ fontSize: '0.82rem', letterSpacing: '0.03em' }}>Tactical advice</strong>
+            <span style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setHiddenAdvice(aiAdviceText)}
+                style={{
+                  background: 'transparent',
+                  color: '#cbd5e1',
+                  border: '1px solid #475569',
+                  borderRadius: 6,
+                  padding: '0.12rem 0.4rem',
+                  cursor: 'pointer',
+                  fontSize: '0.72rem',
+                }}
+              >
+                Hide
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdviceEnabled(false)}
+                style={{
+                  background: 'transparent',
+                  color: '#cbd5e1',
+                  border: '1px solid #475569',
+                  borderRadius: 6,
+                  padding: '0.12rem 0.4rem',
+                  cursor: 'pointer',
+                  fontSize: '0.72rem',
+                }}
+              >
+                Turn off
+              </button>
+            </span>
+          </div>
+          <p style={{ margin: 0, fontSize: '0.95rem', lineHeight: 1.45 }}>{aiAdviceText}</p>
+        </aside>
+      )}
+
+      {reviewOpen && (
+        <FightReviewPanel
+          record={fightReview}
+          earlier={fightJournal.filter(fight => fight.id !== fightReview?.id).slice(0, 3)}
+          onClose={() => onDismissReview?.()}
+        />
       )}
 
       {/* Picture-in-Picture Live Camera & Skeleton Corner Preview */}

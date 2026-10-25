@@ -6,6 +6,16 @@ import type {
   PlayerColor,
   PromotionPieceClass,
 } from '@let-him-rook/shared';
+import {
+  buildFightRecord,
+  emptyTally,
+  fightEndFromSnapshot,
+  loadJournal,
+  noteDuelEvents,
+  saveJournal,
+  type FightRecord,
+  type FightTally,
+} from '../review/fightReview.ts';
 
 export interface InterpolatedFighter {
   x: number;
@@ -42,6 +52,9 @@ export interface MatchState {
   feedbackToast: { message: string; isError: boolean; timestamp: number } | null;
   aiAdvice: string | null;
   interpolation: InterpolationState;
+  fightJournal: FightRecord[];
+  fightReview: FightRecord | null;
+  reviewOpen: boolean;
   localMoveIntent: {
     moveX: number;
     moveZ: number;
@@ -79,10 +92,15 @@ class MatchStoreManager {
       updatedAt: 0,
     },
     visualEffects: [],
+    fightJournal: loadJournal(),
+    fightReview: null,
+    reviewOpen: false,
   };
 
   private listeners: Set<StateListener> = new Set();
   private effectCounter = 0;
+  private fightTally: FightTally = emptyTally();
+  private finalizedDuelKey: number | null = null;
 
   public getState(): MatchState {
     return this.state;
@@ -141,7 +159,10 @@ class MatchStoreManager {
         updatedAt: 0,
       },
       visualEffects: [],
+      reviewOpen: false,
     };
+    this.fightTally = emptyTally();
+    this.finalizedDuelKey = null;
     this.emit();
   }
 
@@ -163,6 +184,7 @@ class MatchStoreManager {
 
     // Prune visual effects older than 1.2s
     const activeEffects = this.state.visualEffects.filter(e => now - e.createdAt < 1200);
+    const reviewPatch = this.collectFightReview(newSnapshot);
 
     this.state = {
       ...this.state,
@@ -174,11 +196,55 @@ class MatchStoreManager {
         targetReceivedAt: now,
       },
       visualEffects: activeEffects,
+      ...reviewPatch,
     };
     this.emit();
   }
 
+  /**
+   * Events for a finishing duel arrive before the duel_result snapshot.
+   * Fold them in addDuelEvents, then write the saved review here once.
+   */
+  private collectFightReview(next: MatchSnapshot): Partial<MatchState> {
+    const prev = this.state.snapshot;
+    const prevStarted = prev?.duelSnapshot?.startedAt ?? null;
+    const nextStarted = next.duelSnapshot?.startedAt ?? null;
+
+    if (prev?.phase !== 'duel_intro' && next.phase === 'duel_intro') {
+      this.fightTally = emptyTally();
+      this.finalizedDuelKey = null;
+    } else if (
+      nextStarted !== null &&
+      prevStarted !== null &&
+      nextStarted !== prevStarted &&
+      next.phase !== 'duel_result'
+    ) {
+      this.fightTally = emptyTally();
+    }
+
+    if (
+      prev?.phase === 'duel_result' ||
+      next.phase !== 'duel_result' ||
+      !next.duelSnapshot ||
+      !this.state.localColor ||
+      this.finalizedDuelKey === next.duelSnapshot.startedAt
+    ) {
+      return {};
+    }
+
+    const end = fightEndFromSnapshot(next, this.state.localColor);
+    if (!end) return {};
+    const record = buildFightRecord(this.fightTally, end);
+    this.finalizedDuelKey = next.duelSnapshot.startedAt;
+    const fightJournal = [record, ...this.state.fightJournal].slice(0, 12);
+    saveJournal(fightJournal);
+    return { fightJournal, fightReview: record, reviewOpen: true };
+  }
+
   public addDuelEvents(events: DuelEvent[]): void {
+    if (this.state.localColor) {
+      this.fightTally = noteDuelEvents(this.fightTally, events, this.state.localColor);
+    }
     const now = performance.now();
     const added: VisualDuelEffect[] = events.map(event => ({
       id: `vfx_${++this.effectCounter}_${now}`,
@@ -231,6 +297,24 @@ class MatchStoreManager {
 
   public setAiAdvice(advice: string | null): void {
     this.state = { ...this.state, aiAdvice: advice };
+    this.emit();
+  }
+
+  public dismissFightReview(): void {
+    if (!this.state.reviewOpen) return;
+    this.state = { ...this.state, reviewOpen: false };
+    this.emit();
+  }
+
+  public toggleFightReview(): void {
+    const reviewOpen = !this.state.reviewOpen;
+    this.state = {
+      ...this.state,
+      reviewOpen,
+      fightReview: reviewOpen
+        ? this.state.fightReview ?? this.state.fightJournal[0] ?? null
+        : this.state.fightReview,
+    };
     this.emit();
   }
 }

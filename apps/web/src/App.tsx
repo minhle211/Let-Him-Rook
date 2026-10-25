@@ -808,6 +808,12 @@ export const App: React.FC = () => {
         onOpenCalibration={() => setShowCalibration(true)}
         onLeaveRoom={handleLeaveRoom}
         aiAdviceText={matchState.aiAdvice}
+        onDismissAdvice={() => matchStore.setAiAdvice(null)}
+        fightReview={matchState.fightReview}
+        fightJournal={matchState.fightJournal}
+        reviewOpen={matchState.reviewOpen}
+        onToggleReview={() => matchStore.toggleFightReview()}
+        onDismissReview={() => matchStore.dismissFightReview()}
         toast={matchState.feedbackToast}
         onToggleSandbox={() => setIsSandboxOpen(v => !v)}
         isSandboxOpen={isSandboxOpen}
