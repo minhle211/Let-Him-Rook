@@ -77,8 +77,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
   onRespawnObstacles,
 }) => {
   const [activeTab, setActiveTab] = useState<'chess' | 'combat'>('chess');
-  const [fenInput, setFenInput] = useState<string>(snapshot.fen);
-  const [copiedFen, setCopiedFen] = useState(false);
 
   // Combat stage choices
   const [playerClass, setPlayerClass] = useState<PieceClass>('knight');
@@ -97,20 +95,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
     snapshot.phase === 'active_duel' ||
     snapshot.phase === 'duel_intro' ||
     snapshot.phase === 'duel_result';
-
-  const handleCopyFen = () => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(snapshot.fen).catch(() => {});
-      setCopiedFen(true);
-      setTimeout(() => setCopiedFen(false), 1500);
-    }
-  };
-
-  const handleLoadFen = () => {
-    if (fenInput.trim()) {
-      onSetFen(fenInput.trim());
-    }
-  };
 
   const handleToggleTurn = () => {
     const tokens = snapshot.fen.split(' ');
@@ -335,31 +319,8 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
 
             {/* 12-Piece Palette & Eraser */}
             <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '0.4rem',
-                }}
-              >
-                <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#94a3b8' }}>
-                  PIECE PALETTE
-                </span>
-                {selectedPalette && (
-                  <button
-                    onClick={() => onSelectPalette(null)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#f87171',
-                      fontSize: '0.75rem',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Clear Tool
-                  </button>
-                )}
+              <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>
+                PIECE PALETTE
               </div>
 
               {/* White Pieces */}
@@ -449,63 +410,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
               </button>
             </div>
 
-            {/* Board Reset & Clear Actions */}
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>
-                BOARD ACTIONS
-              </div>
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
-                <button
-                  onClick={() => {
-                    const standardFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-                    onSetFen(standardFen);
-                    setFenInput(standardFen);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    borderRadius: 8,
-                    backgroundColor: '#0284c7',
-                    color: '#ffffff',
-                    border: 'none',
-                    fontSize: '0.78rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.3rem',
-                  }}
-                >
-                  🔄 Reset Board
-                </button>
-                <button
-                  onClick={() => {
-                    const emptyFen = '8/8/8/8/8/8/8/8 w - - 0 1';
-                    onSetFen(emptyFen);
-                    setFenInput(emptyFen);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.5rem',
-                    borderRadius: 8,
-                    backgroundColor: '#334155',
-                    color: '#f1f5f9',
-                    border: '1px solid #475569',
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.3rem',
-                  }}
-                >
-                  🗑️ Clear Board
-                </button>
-              </div>
-            </div>
-
             {/* Presets */}
             <div>
               <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>
@@ -517,7 +421,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
                     key={preset.name}
                     onClick={() => {
                       onSetFen(preset.fen);
-                      setFenInput(preset.fen);
                     }}
                     style={{
                       padding: '0.45rem',
@@ -535,149 +438,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* FEN Controls */}
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.4rem' }}>
-                CUSTOM FEN
-              </div>
-              <input
-                type="text"
-                value={fenInput}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFenInput(e.target.value)}
-                placeholder="Paste FEN string here"
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  padding: '0.5rem',
-                  borderRadius: 6,
-                  border: '1px solid #334155',
-                  backgroundColor: '#0f172a',
-                  color: '#94a3b8',
-                  fontSize: '0.72rem',
-                  fontFamily: 'monospace',
-                  marginBottom: '0.4rem',
-                }}
-              />
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
-                <button
-                  onClick={handleCopyFen}
-                  style={{
-                    flex: 1,
-                    padding: '0.45rem',
-                    borderRadius: 6,
-                    backgroundColor: '#1e293b',
-                    color: '#cbd5e1',
-                    border: '1px solid #334155',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {copiedFen ? '✅ Copied' : '📋 Copy FEN'}
-                </button>
-                <button
-                  onClick={handleLoadFen}
-                  style={{
-                    flex: 1,
-                    padding: '0.45rem',
-                    borderRadius: 6,
-                    backgroundColor: '#0284c7',
-                    color: '#ffffff',
-                    border: 'none',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  📥 Load FEN
-                </button>
-              </div>
-            </div>
-
-            {/* Stage Duel From Board */}
-            <div
-              style={{
-                backgroundColor: '#1e293b',
-                padding: '0.8rem',
-                borderRadius: 10,
-                border: '1px solid #334155',
-              }}
-            >
-              <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#f1f5f9', marginBottom: '0.5rem' }}>
-                ⚔️ STAGE CONTESTED DUEL
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.6rem' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '0.2rem' }}>
-                    White Fighter
-                  </label>
-                  <select
-                    value={playerClass}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setPlayerClass(e.target.value as PieceClass)
-                    }
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem',
-                      borderRadius: 6,
-                      backgroundColor: '#0f172a',
-                      color: '#f8fafc',
-                      border: '1px solid #334155',
-                      fontSize: '0.75rem',
-                    }}
-                  >
-                    {PIECE_CLASSES.map(c => (
-                      <option key={c} value={c}>
-                        {c.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '0.2rem' }}>
-                    Black Fighter
-                  </label>
-                  <select
-                    value={opponentClass}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                      setOpponentClass(e.target.value as PieceClass)
-                    }
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem',
-                      borderRadius: 6,
-                      backgroundColor: '#0f172a',
-                      color: '#f8fafc',
-                      border: '1px solid #334155',
-                      fontSize: '0.75rem',
-                    }}
-                  >
-                    {PIECE_CLASSES.map(c => (
-                      <option key={c} value={c}>
-                        {c.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <button
-                onClick={() => onStartDuel(playerClass, opponentClass, config.aiBehavior, false)}
-                style={{
-                  width: '100%',
-                  padding: '0.6rem',
-                  borderRadius: 8,
-                  backgroundColor: '#d97706',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  fontSize: '0.8rem',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                ⚔️ Launch Board Capture Duel
-              </button>
             </div>
           </>
         ) : (
@@ -848,7 +608,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  marginBottom: '0.6rem',
                 }}
               >
                 <div>
@@ -874,29 +633,6 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
                 >
                   {config.noCooldowns ? 'ACTIVE' : 'OFF'}
                 </button>
-              </div>
-
-              {/* Movement Speed Multiplier Slider */}
-              <div style={{ marginTop: '0.6rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-                  <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#f8fafc' }}>
-                    🏃 Move Speed:
-                  </span>
-                  <span style={{ fontWeight: 800, color: '#38bdf8' }}>
-                    {(config.moveSpeedMultiplier ?? 1.0).toFixed(1)}x
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2.5"
-                  step="0.1"
-                  value={config.moveSpeedMultiplier ?? 1.0}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    onUpdateConfig({ moveSpeedMultiplier: parseFloat(e.target.value) })
-                  }
-                  style={{ width: '100%', accentColor: '#06b6d4', cursor: 'pointer' }}
-                />
               </div>
             </div>
 
