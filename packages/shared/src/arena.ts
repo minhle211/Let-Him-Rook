@@ -19,23 +19,32 @@ export interface WallStone {
 }
 
 export const TREE_RADIUS = 0.55;
+/** Scattered around the field, clear of the board, the castle and the puddles. */
 export const TREES = [
-  { id: 'tree_1', x: 6.4, z: -6.4 },
-  { id: 'tree_2', x: 3.0, z: 6.5 },
+  { id: 'tree_1', x: 8.6, z: -8.6 },
+  { id: 'tree_2', x: 5.2, z: -9.6 },
+  { id: 'tree_3', x: 9.6, z: -4.8 },
+  { id: 'tree_4', x: 2.2, z: 9.4 },
+  { id: 'tree_5', x: 8.4, z: 8.0 },
+  { id: 'tree_6', x: -6.0, z: -9.2 },
+  { id: 'tree_7', x: -9.4, z: -6.4 },
+  { id: 'tree_8', x: 9.4, z: 1.6 },
+  { id: 'tree_9', x: -1.6, z: -9.7 },
 ];
 
 export const PUDDLE_SLOW_FACTOR = 0.5; // movement speed multiplier while standing in a puddle
 /** Elliptical puddles: rx along x, rz along z. */
 export const PUDDLES = [
-  { id: 'puddle_1', x: -6.4, z: -3.4, rx: 1.0, rz: 1.35 },
-  { id: 'puddle_2', x: 6.4, z: 3.0, rx: 0.95, rz: 1.2 },
+  { id: 'puddle_1', x: -7.6, z: -2.4, rx: 1.0, rz: 1.35 },
+  { id: 'puddle_2', x: 7.0, z: 4.6, rx: 0.95, rz: 1.2 },
 ];
 
 export const TOWER = {
   id: 'tower_1',
-  // Tucked into the corner; the castle's wall wings run from it along both edges
-  x: -6.6,
-  z: 6.6,
+  // Far corner on White's side: the tower and tunnels sit behind and beside White's chess camera
+  // (z = 8.2) and outside Black's view of the board, so they never cover the chessboard.
+  x: -9.6,
+  z: 9.6,
   radius: 1.5, // outer radius of the round wall
   wallThickness: 0.32,
   gateWidth: 1.1, // clear opening between the door jambs (a fighter is 0.9 wide)

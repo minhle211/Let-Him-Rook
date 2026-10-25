@@ -8,6 +8,7 @@ import {
   SPAWN_CLEAR_RADIUS,
   SPAWN_SEPARATION,
   TABLE_HALF_EXTENT,
+  TREES,
   isRangedPieceClass,
 } from '@let-him-rook/shared';
 import {
@@ -50,8 +51,8 @@ test('Duel Simulator: Spawning respects 5.0u separation and 2.5u obstacle cleara
     }
   }
 
-  // Arena features: two trees and the castle tower
-  assert.equal(duel.obstacles.filter(o => o.type === 'tree').length, 2);
+  // Arena features: the trees and the castle tower
+  assert.equal(duel.obstacles.filter(o => o.type === 'tree').length, TREES.length);
   assert.equal(duel.obstacles.filter(o => o.type === 'tower').length, 1);
 });
 
