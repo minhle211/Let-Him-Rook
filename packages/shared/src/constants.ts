@@ -110,6 +110,8 @@ export const CLASS_ABILITY_CONFIG = {
       attackIntervalMs: 2000,
       speed: 2.2,
       baseDamageMultiplier: 0.75, // ally hits for 75% of its piece's normal damage
+      rangedTargetDistance: 3.0, // 3 blocks (units) away from target
+      recalibrateIntervalMs: 3000, // recalibrate distance and cycle move/stop every 3s
     },
   },
 } as const;

@@ -528,4 +528,3 @@ test('CombatGestureDetector Low-Latency Confirmation: Rook 2-frame & 1-frame sna
   const coldStep = filter.update(0.50, 1000);
   assert.ok(coldStep.value < 0.50, 'Cold-start frame must be low-pass filtered against restValue rather than bypassing filter');
 });
-

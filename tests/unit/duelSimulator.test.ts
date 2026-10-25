@@ -8,6 +8,7 @@ import {
   SPAWN_CLEAR_RADIUS,
   SPAWN_SEPARATION,
   TABLE_HALF_EXTENT,
+  isRangedPieceClass,
 } from '@let-him-rook/shared';
 import {
   applyAbilityIntent,
@@ -578,6 +579,55 @@ test('Duel Simulator: Manual rotation and aim-relative movement integration', ()
   assert.ok(Math.abs(proj.vz) < 0.1);
 });
 
+
+test('Pawn swings emit visuals on misses and blocks, but not rejected cooldown attempts', () => {
+  const duel = createDuel(DUMMY_FEN, {
+    from: 'e2', to: 'e7', attackerColor: 'w', attackerClass: 'pawn', defenderClass: 'pawn',
+  });
+  const now = duel.startedAt;
+  const initialHp = duel.defender.hp;
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now).accepted, true);
+  assert.equal(duel.defender.hp, initialHp);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 1);
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now + 1).accepted, false);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 1);
+  duel.attacker.x = 0;
+  duel.attacker.z = 0;
+  duel.attacker.facingRad = 0;
+  duel.defender.x = 0;
+  duel.defender.z = -1;
+  duel.defender.isParrying = true;
+  assert.equal(applyAbilityIntent(duel, 'w', 'pawn_sweep', undefined, now + 2000).accepted, true);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 2);
+  assert.ok(duel.events.some(e => e.type === 'parry_blocked'));
+  assert.equal(duel.defender.hp, initialHp);
+});
+
+test('Knight cleave emits melee_swing visual event on misses, blocks, and hits', () => {
+  const duel = createDuel(DUMMY_FEN, {
+    from: 'b1', to: 'c3', attackerColor: 'w', attackerClass: 'knight', defenderClass: 'knight',
+  });
+  duel.obstacles = [];
+  const now = duel.startedAt;
+
+  // Knight misses: opponent is 10 units away (behind)
+  duel.attacker.x = 0;
+  duel.attacker.z = 0;
+  duel.attacker.facingRad = 0;
+  duel.defender.x = 0;
+  duel.defender.z = 10;
+
+  assert.equal(applyAbilityIntent(duel, 'w', 'knight_cleave', undefined, now).accepted, true);
+  // During windup (before 350ms), cleave has not struck yet
+  stepDuel(duel, now + 200);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 0);
+
+  // When windup completes at 350ms, melee_swing event is emitted even on a miss
+  stepDuel(duel, now + 400);
+  assert.equal(duel.events.filter(e => e.type === 'melee_swing').length, 1);
+  assert.equal(duel.defender.hp, FIGHTER_MAX_HP, 'Opponent out of range should take no damage');
+});
+
 const kingVsPawn = () =>
   createDuel(
     DUMMY_FEN,
@@ -632,4 +682,99 @@ test("Duel Simulator: each summoned ally hits for 75% of its piece's damage", ()
     seen.add(ally.pieceClass);
   }
   assert.equal(seen.size, 5, 'checked every summonable piece');
+});
+
+test('Duel Simulator: identify ranged/projectile summon characters', () => {
+  // Ranged/projectile shooting: rook, bishop, queen
+  assert.equal(isRangedPieceClass('rook'), true, 'Rook is ranged');
+  assert.equal(isRangedPieceClass('bishop'), true, 'Bishop is ranged');
+  assert.equal(isRangedPieceClass('queen'), true, 'Queen is ranged');
+
+  // Melee / close-range: pawn, knight
+  assert.equal(isRangedPieceClass('pawn'), false, 'Pawn is melee');
+  assert.equal(isRangedPieceClass('knight'), false, 'Knight is melee');
+  assert.equal(isRangedPieceClass('king'), false, 'King is not ranged');
+});
+
+test('Duel Simulator: ranged summons recalibrate every 3s, moving away from target for 3s, then stopping for 3s', () => {
+  const duel = kingVsPawn();
+  duel.obstacles = [];
+  duel.attacker.x = 0;
+  duel.attacker.z = 2.0;
+  duel.defender.x = 0;
+  duel.defender.z = 0; // enemy at (0, 0)
+
+  // Summon an ally and force it to be a ranged class (rook)
+  applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000);
+  const ally = duel.allies[0];
+  ally.pieceClass = 'rook';
+  ally.x = 0;
+  ally.z = 1.5; // distance = 1.5 blocks (< 3 blocks) from enemy at (0, 0)
+
+  const initialDist = Math.hypot(duel.defender.x - ally.x, duel.defender.z - ally.z);
+  assert.equal(initialDist, 1.5);
+
+  // 1. First 3 seconds (t = 1000 to 4000ms): ally moves away from target
+  for (let t = 1050; t <= 3950; t += 50) {
+    stepDuel(duel, t);
+  }
+  const distAfter3s = Math.hypot(duel.defender.x - ally.x, duel.defender.z - ally.z);
+  assert.ok(distAfter3s > initialDist, `Ranged summon must move away from target during first 3s (was ${initialDist}, now ${distAfter3s})`);
+
+  // 2. Next 3 seconds (t = 4000 to 7000ms): ally stops
+  const stoppedZ = ally.z;
+  const stoppedX = ally.x;
+  for (let t = 4050; t <= 6950; t += 50) {
+    stepDuel(duel, t);
+    assert.equal(ally.x, stoppedX, 'Ranged summon must stay stopped during stop phase');
+    assert.equal(ally.z, stoppedZ, 'Ranged summon must stay stopped during stop phase');
+  }
+
+  // 3. Move enemy closer (1.0 block in front towards edge) to trigger move away back towards center on next recalibration at t = 7000ms
+  duel.defender.z = ally.z + 1.0;
+  const distBeforeRecalibrate = Math.hypot(duel.defender.x - ally.x, duel.defender.z - ally.z);
+  assert.ok(distBeforeRecalibrate < 3.0);
+
+  // At t = 7000ms (elapsed 6000ms), recalibrate and move away for the next 3 seconds (t = 7000 to 10000ms)
+  for (let t = 7050; t <= 9950; t += 50) {
+    stepDuel(duel, t);
+  }
+  const distAfterNext3s = Math.hypot(duel.defender.x - ally.x, duel.defender.z - ally.z);
+  assert.ok(distAfterNext3s > distBeforeRecalibrate, `Ranged summon must recalibrate and move away for the next 3s (was ${distBeforeRecalibrate}, now ${distAfterNext3s})`);
+
+  // 4. Next 3 seconds (t = 10000 to 13000ms): ally stops again
+  const stoppedAgainZ = ally.z;
+  const stoppedAgainX = ally.x;
+  for (let t = 10050; t <= 12950; t += 50) {
+    stepDuel(duel, t);
+    assert.equal(ally.x, stoppedAgainX, 'Ranged summon must stay stopped during second stop phase');
+    assert.equal(ally.z, stoppedAgainZ, 'Ranged summon must stay stopped during second stop phase');
+  }
+
+  // Step past 12s duration (t = 13050ms): ally expires
+  stepDuel(duel, 13050);
+  assert.equal(duel.allies.length, 0, 'Ally should expire after 12s total duration');
+});
+
+test('Duel Simulator: ranged summons further than 3 blocks approach target to keep 3 blocks distance', () => {
+  const duel = kingVsPawn();
+  duel.obstacles = [];
+  duel.attacker.x = 0;
+  duel.attacker.z = 6.0;
+  duel.defender.x = 0;
+  duel.defender.z = 0; // enemy at (0, 0)
+
+  applyAbilityIntent(duel, 'w', 'king_summon', undefined, 1000);
+  const ally = duel.allies[0];
+  ally.pieceClass = 'queen'; // ranged
+  ally.x = 0;
+  ally.z = 6.0; // 6 blocks away (> 3 blocks)
+
+  // Step 2 seconds: queen approaches towards 3 blocks distance
+  for (let t = 1050; t <= 3000; t += 50) {
+    stepDuel(duel, t);
+  }
+  const dist = Math.hypot(duel.defender.x - ally.x, duel.defender.z - ally.z);
+  assert.ok(dist < 6.0, `Ranged summon further than 3 blocks must approach towards 3 blocks (got ${dist})`);
+  assert.ok(dist >= 3.0, `Ranged summon should not approach closer than 3 blocks (got ${dist})`);
 });
