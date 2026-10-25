@@ -61,7 +61,12 @@ export async function explainPosition(
         })
       ),
     ]);
-  } catch {
+  } catch (err) {
+    // A failing or slow provider must never break a match — but say why in
+    // the server log, otherwise a bad API key looks exactly like success.
+    console.warn(
+      `AI advice provider failed, using template advice: ${err instanceof Error ? err.message : String(err)}`
+    );
     return defaultTacticalAdvice(snapshot);
   }
 }

@@ -157,3 +157,28 @@ The server (`apps/server`) and web client (`apps/web`) communicate over `/ws` us
   - `ai_advice` (`{ advice: string }`)
   - `error` (`{ code, message }`)
   - `pong` (`{ timestamp }`)
+
+---
+
+## AI Advice (Meta Model API — Muse Spark)
+
+The **💡 AI Advice** button in a match asks the server for tactical advice. With a
+Meta Model API key configured, that advice is generated live by Muse Spark acting
+as a two-player social host (stakes + a line both players can react to); without a
+key, the server falls back to built-in template advice, so the game always runs.
+
+Setup (free signup credits are enough — a match uses only a few small calls):
+
+1. Create an API key in the Meta for Developers console (Model API → API keys).
+2. In the repo root: `cp .env.example .env` and put the key after `META_API_KEY=`
+   (`.env` is git-ignored — never commit a real key).
+3. Start as usual: `npm run host` (or `npm run dev` / `npm start`).
+   The server log confirms which mode is active:
+   `AI advice: live provider enabled (muse-spark-1.1 via https://api.meta.ai/v1).`
+
+Implementation: `apps/server/src/match/metaAiProvider.ts` implements the existing
+`AiProvider` interface (`apps/server/src/match/aiAdvisor.ts`) against the
+OpenAI-compatible `POST /chat/completions` endpoint, honoring the advisor's
+5-second timeout and fallback. Optional env overrides: `AI_BASE_URL`, `AI_MODEL`
+(any OpenAI-compatible endpoint can be substituted), `AI_API_KEY` as an alias
+for `META_API_KEY`.
