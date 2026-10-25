@@ -68,8 +68,8 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   localColor,
   videoRef,
   lastFrameData,
-  cursorPoint,
-  isPinching = false,
+  cursorPoint: _cursorPoint,
+  isPinching: _isPinching = false,
   onDevAbility,
   onRequestAdvice,
   onOpenCalibration,
@@ -245,26 +245,6 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
         zIndex: 30,
       }}
     >
-      {/* Floating Fingertip Cursor during chess turn */}
-      {snapshot.phase === 'chess_turn' && cursorPoint && (
-        <div
-          style={{
-            position: 'fixed',
-            left: `${Math.max(2, Math.min(98, ((cursorPoint.x - 0.1) / 0.8) * 100))}%`,
-            top: `${Math.max(2, Math.min(98, ((cursorPoint.y - 0.1) / 0.8) * 100))}%`,
-            width: isPinching ? 22 : 16,
-            height: isPinching ? 22 : 16,
-            borderRadius: '50%',
-            backgroundColor: isPinching ? 'rgba(34, 197, 94, 0.85)' : 'rgba(251, 191, 36, 0.75)',
-            border: '2px solid #ffffff',
-            transform: 'translate(-50%, -50%)',
-            boxShadow: '0 0 12px rgba(0,0,0,0.6)',
-            pointerEvents: 'none',
-            zIndex: 70,
-            transition: 'width 0.08s, height 0.08s',
-          }}
-        />
-      )}
 
       {/* Top Header Bar */}
       <div

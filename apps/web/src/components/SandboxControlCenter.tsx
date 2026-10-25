@@ -116,6 +116,7 @@ export const SandboxControlCenter: React.FC<SandboxControlCenterProps> = ({
     const tokens = snapshot.fen.split(' ');
     const currentTurn = tokens[1] || 'w';
     tokens[1] = currentTurn === 'w' ? 'b' : 'w';
+    tokens[3] = '-'; // En passant is only valid for the single turn immediately following a two-square advance
     onSetFen(tokens.join(' '));
   };
 

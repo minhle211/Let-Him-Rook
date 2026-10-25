@@ -111,6 +111,15 @@ export class Chess {
       b: { k: castling.includes('k'), q: castling.includes('q') },
     };
     this.epSquare = ep !== '-' && ep ? toIndex(ep) : null;
+    if (this.epSquare !== null) {
+      const epRow = rank(this.epSquare);
+      // For White to move, epSquare must be on rank 6 (row 2).
+      // For Black to move, epSquare must be on rank 3 (row 5).
+      const validEpRow = this._turn === 'w' ? 2 : 5;
+      if (epRow !== validEpRow) {
+        this.epSquare = null;
+      }
+    }
     this.halfMoves = half ? parseInt(half, 10) : 0;
     this.moveNumber = full ? parseInt(full, 10) : 1;
     this.historyList = [];
@@ -162,6 +171,7 @@ export class Chess {
   public put(piece: Piece, square: string): boolean {
     const idx = toIndex(square);
     this.board[idx] = { ...piece };
+    this.epSquare = null;
     return true;
   }
 
@@ -169,6 +179,7 @@ export class Chess {
     const idx = toIndex(square);
     const piece = this.board[idx];
     this.board[idx] = null;
+    this.epSquare = null;
     return piece;
   }
 
@@ -349,14 +360,20 @@ export class Chess {
               });
             }
           } else if (this.epSquare !== null && target === this.epSquare) {
-            moves.push({
-              color: us,
-              from: algebraic(i),
-              to: algebraic(target),
-              piece: 'p',
-              captured: 'p',
-              flags: 'e',
-            });
+            const epRow = rank(i);
+            const reqRow = us === 'w' ? 3 : 4; // White pawn must be on rank 5 (row 3); Black pawn on rank 4 (row 4)
+            const epCapturedIdx = target + (us === 'w' ? 8 : -8);
+            const epPiece = this.board[epCapturedIdx];
+            if (epRow === reqRow && epPiece && epPiece.color === them && epPiece.type === 'p') {
+              moves.push({
+                color: us,
+                from: algebraic(i),
+                to: algebraic(target),
+                piece: 'p',
+                captured: 'p',
+                flags: 'e',
+              });
+            }
           }
         }
       } else if (p.type === 'n') {
