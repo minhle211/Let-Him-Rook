@@ -38,12 +38,12 @@ const POSE_CONNECTIONS: [number, number][] = [
 ];
 
 const SANDBOX_CLASSES: { id: PieceClass; label: string; hint: string }[] = [
-  { id: 'pawn', label: '♙ Pawn', hint: 'Sweep right wrist horizontally across chest, or hold left open palm up to parry' },
+  { id: 'pawn', label: '♙ Pawn', hint: 'Stationary open right palm to parry; rapid right wrist sweep to slash (distinct gestures)' },
   { id: 'rook', label: '♖ Rook', hint: 'Extend right arm straight forward to fire cannon shot; drop arm to re-arm' },
-  { id: 'knight', label: '♘ Knight', hint: 'Cross both wrists at chest, then rapidly separate horizontally' },
-  { id: 'bishop', label: '♗ Bishop', hint: 'Cock right hand near right shoulder, then thrust forward' },
-  { id: 'queen', label: '♕ Queen', hint: 'Raise both hands to shoulder height and push forward together' },
-  { id: 'king', label: '♔ King', hint: 'Clasp both hands together at chest center and hold for 0.4s' },
+  { id: 'knight', label: '♘ Knight', hint: 'Raise right hand above shoulder, then rapidly chop downward to cleave' },
+  { id: 'bishop', label: '♗ Bishop', hint: 'Cock right hand near right shoulder, then thrust forward for ice bolt' },
+  { id: 'queen', label: '♕ Queen', hint: 'Raise right open palm to shoulder height and hold for homing volley' },
+  { id: 'king', label: '♔ King', hint: 'Hold closed right fist at chest center for 0.4s to summon ally' },
 ];
 
 export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
@@ -59,6 +59,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   });
   const [bodyBaseline, setBodyBaseline] = useState(initialProfile.bodyBaseline);
   const [movementSensitivity, setMovementSensitivity] = useState(initialProfile.movementSensitivity ?? { ...DEFAULT_MOVEMENT_SENSITIVITY });
+  const [cameraBaselineTilt, setCameraBaselineTilt] = useState<number | undefined>(initialProfile.cameraBaselineTilt ?? savedProfile?.cameraBaselineTilt ?? 0);
   const captureRef = useRef(new CombinedCalibrationCapture());
   const [captureStart, setCaptureStart] = useState<number | null>(null);
   const [clock, setClock] = useState(performance.now());
@@ -80,8 +81,9 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     const baseline = result.baseline!;
     setBodyBaseline(baseline); setTorsoCenter(result.center!); setShoulderWidth(baseline.shoulderWidth);
     setPinchThresholds(result.pinch!);
+    if (result.cameraBaselineTilt !== undefined) setCameraBaselineTilt(result.cameraBaselineTilt);
     savedBodyRef.current = { baseline, center: result.center!, shoulderWidth: baseline.shoulderWidth };
-    setCaptureError(''); setStatusMessage('Body and pinch calibrated. Test movement and gestures below.'); setStep('practice');
+    setCaptureError(''); setStatusMessage('Body, pinch, and 5-finger open camera direction calibrated. Test movement and gestures below.'); setStep('practice');
   }, [clock, captureStart]);
   const [step, setStep] = useState<'neutral' | 'practice'>('neutral');
   const [torsoCenter, setTorsoCenter] = useState<{ x: number; y: number }>(
@@ -132,6 +134,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     if (step !== 'practice' || !lastFrameData) return;
     const profile: CalibrationProfile = {
       bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity,
+      cameraBaselineTilt,
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
@@ -294,6 +297,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const handleFinish = () => {
     const profile: CalibrationProfile = {
       bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity,
+      cameraBaselineTilt,
       neutralTorsoCenter: torsoCenter,
       shoulderWidth,
       pinchThresholds,
@@ -305,6 +309,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       bodyCalibrated: Boolean(savedBodyRef.current.baseline),
       neutralTorsoCenter: savedBodyRef.current.center,
       shoulderWidth: savedBodyRef.current.shoulderWidth,
+      cameraBaselineTilt,
       movementSensitivity: undefined,
     });
   };
@@ -378,7 +383,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
                 ? 'LOADING AI MODELS...'
                 : diagnostics.workerStatus === 'error'
                 ? 'WORKER ERROR'
-                : `${diagnostics.fps} FPS (${diagnostics.inferenceMs}ms)`}
+                : `${diagnostics.fps} FPS (${diagnostics.inferenceMs}ms${diagnostics.delegate ? ` · ${diagnostics.delegate}` : ''})`}
             </span>
             <span
               style={{
@@ -486,8 +491,12 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             <circle cx="320" cy="77" r="33" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
             <path d="M245 170 Q255 125 290 122 L350 122 Q385 125 395 170 L412 285 L228 285 Z" fill="rgba(250,204,21,.08)" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
             <path d="M245 165 L190 207 M395 165 L450 207" fill="none" stroke="#facc15" strokeWidth="3" strokeDasharray="8 5" />
-            <circle cx="190" cy="207" r="18" fill="none" stroke="#a855f7" strokeWidth="3" />
-            <text x="454" y="210" fill="#fef08a" fontSize="17" fontWeight="bold">HAND</text>
+            <circle cx="190" cy="207" r="22" fill="rgba(56, 189, 248, 0.12)" stroke="#38bdf8" strokeWidth="3" strokeDasharray="6 4" />
+            <text x="128" y="240" fill="#38bdf8" fontSize="13" fontWeight="bold">5 FINGERS OPEN</text>
+            <text x="135" y="255" fill="#93c5fd" fontSize="11">POINT AT CAMERA</text>
+            <circle cx="450" cy="207" r="22" fill="rgba(168, 85, 247, 0.12)" stroke="#a855f7" strokeWidth="3" strokeDasharray="6 4" />
+            <text x="405" y="240" fill="#fef08a" fontSize="13" fontWeight="bold">RIGHT PINCH</text>
+            <text x="415" y="255" fill="#cbd5e1" fontSize="11">OPEN → PINCH</text>
           </svg>}
           {/* Live Telemetry Overlay at bottom of video */}
           <div
@@ -526,16 +535,16 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           {statusMessage}
         </p>
 
-        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline), movementSensitivity}} pose={lastFrameData?.pose ?? null}/>
+        <BodyMovementGuide profile={{...DEFAULT_CALIBRATION, bodyBaseline, bodyCalibrated:Boolean(bodyBaseline), movementSensitivity, cameraBaselineTilt}} pose={lastFrameData?.pose ?? null}/>
         {step === 'neutral' && <section style={{padding:16,background:'#1e293b',border:'2px solid #facc15',borderRadius:8,marginTop:10}}>
-          <h3 style={{margin:'0 0 8px',color:'#facc15'}}>Body and Pinch Calibration</h3>
-          <p>Stand inside the outline with your face, shoulders, and one hand visible. Keep your body stance steady for the entire capture.</p>
+          <h3 style={{margin:'0 0 8px',color:'#facc15'}}>Body, Hands, and Camera Direction Calibration</h3>
+          <p>Stand inside the outline with face and shoulders visible. Open all 5 fingers on your left hand pointing at the camera as the neutral position. Use your right hand for pinch calibration.</p>
           <div role="status" aria-live="polite" style={{fontSize:20,fontWeight:800,padding:12,background:'#422006',color:'#fef08a',borderRadius:6,marginBottom:8}}>
             {captureStart === null ? 'Ready to calibrate' : clock < captureStart
-              ? `Get ready — calibration starts in ${Math.ceil((captureStart-clock)/1000)} seconds`
+              ? `Get ready — calibration starts in ${Math.ceil((captureStart-clock)/1000)} seconds. Open 5 fingers on left hand pointing at camera.`
               : clock < captureStart + 2500
-                ? 'Stand still in the outline. Keep your hand open.'
-                : 'Keep your stance steady. Touch thumb and index finger together and hold.'}
+                ? 'Left hand: 5 fingers open pointing at camera (neutral). Right hand: open palm.'
+                : 'Keep left hand 5 fingers open pointing at camera. Right hand: pinch thumb and index together.'}
           </div>
           {captureStart !== null && clock >= captureStart && <progress aria-label="Calibration progress" value={Math.min(5000,clock-captureStart)} max={5000} style={{width:'100%',height:16}} />}
           {captureError && <p role="alert" style={{color:'#fecaca',fontWeight:700}}>{captureError}</p>}
@@ -556,7 +565,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
             <MovementSandbox
               profile={{ neutralTorsoCenter: torsoCenter, shoulderWidth, pinchThresholds,
-                bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity, isCalibrated: true }}
+                bodyBaseline, bodyCalibrated: Boolean(bodyBaseline), movementSensitivity, cameraBaselineTilt, isCalibrated: true }}
               frame={lastFrameData}
               onCalibrate={() => setStep('neutral')}
               onChange={profile => {
@@ -564,6 +573,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
                 setTorsoCenter(profile.neutralTorsoCenter);
                 setShoulderWidth(profile.shoulderWidth);
                 setMovementSensitivity(profile.movementSensitivity ?? { ...DEFAULT_MOVEMENT_SENSITIVITY });
+                if (profile.cameraBaselineTilt !== undefined) setCameraBaselineTilt(profile.cameraBaselineTilt);
                 onProfileChange(profile);
               }}
             />

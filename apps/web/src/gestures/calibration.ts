@@ -8,7 +8,8 @@ export interface PinchThresholds {
 export interface CalibrationProfile {
   bodyCalibrated?: boolean;
   bodyBaseline?: { version: 1; noseX: number; shoulderWidth: number };
-  movementSensitivity?: { forward: number; backward: number; left: number; right: number };
+  movementSensitivity?: { forward: number; backward: number; left: number; right: number; camera?: number };
+  cameraBaselineTilt?: number;
   neutralTorsoCenter: { x: number; y: number };
   shoulderWidth: number;
   pinchThresholds: PinchThresholds;
@@ -20,6 +21,8 @@ export const DEFAULT_CALIBRATION: CalibrationProfile = {
   shoulderWidth: 0.25,
   pinchThresholds: { close: 0.38, open: 0.52 },
   isCalibrated: false,
+  cameraBaselineTilt: 0,
+  movementSensitivity: { forward: 1, backward: 1, left: 1, right: 1, camera: 1 },
 };
 
 const STORAGE_KEY = 'rook_calibration_v4';
@@ -69,12 +72,169 @@ export function clearSavedCalibration(): void {
   }
 }
 
-export const DEFAULT_MOVEMENT_SENSITIVITY = { forward: 1, backward: 1, left: 1, right: 1 };
+export const DEFAULT_MOVEMENT_SENSITIVITY = { forward: 1, backward: 1, left: 1, right: 1, camera: 1 };
+
+export function isOpenPalm(hand: Landmark3D[]): boolean {
+  if (!hand || hand.length < 21) return false;
+  const wrist = hand[0];
+  const tips = [hand[4], hand[8], hand[12], hand[16], hand[20]];
+  const mcps = [hand[2], hand[5], hand[9], hand[13], hand[17]];
+
+  for (let i = 0; i < 5; i++) {
+    const tip = tips[i];
+    const mcp = mcps[i];
+    if (!tip || !mcp) return false;
+    const tipDist2D = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+    const mcpDist2D = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y);
+    const hasZ = Number.isFinite(tip.z) && Number.isFinite(wrist.z) && Number.isFinite(mcp.z);
+    const tipDist3D = hasZ
+      ? Math.hypot(tip.x - wrist.x, tip.y - wrist.y, (tip.z! - wrist.z!))
+      : tipDist2D;
+    const mcpDist3D = hasZ
+      ? Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y, (mcp.z! - wrist.z!))
+      : mcpDist2D;
+
+    const tipDist = Math.max(tipDist2D, tipDist3D);
+    const mcpDist = Math.min(mcpDist2D, mcpDist3D);
+    if (tipDist < mcpDist * 1.1) {
+      return false; // Finger is curled
+    }
+  }
+  return true;
+}
+
+export function computeWholeHandTilt(hand: Landmark3D[]): number | null {
+  if (!hand || hand.length < 21) return null;
+  // Camera gesture requires all five fingers of the left hand open pointing at camera
+  if (!isOpenPalm(hand)) return null;
+
+  const wrist = hand[0];
+  const middleMcp = hand[9];
+  const middleTip = hand[12];
+  if (!wrist || !middleMcp || !middleTip) return null;
+  if (
+    !Number.isFinite(wrist.x) || !Number.isFinite(wrist.y) ||
+    !Number.isFinite(middleMcp.x) || !Number.isFinite(middleMcp.y) ||
+    !Number.isFinite(middleTip.x) || !Number.isFinite(middleTip.y)
+  ) {
+    return null;
+  }
+
+  const midX = (middleMcp.x + middleTip.x) / 2;
+  const midY = (middleMcp.y + middleTip.y) / 2;
+
+  const vx = midX - wrist.x;
+  const vy = wrist.y - midY; // Positive upward in inverted screen coordinates
+
+  const len = Math.hypot(vx, vy);
+  if (vy <= 0.01 || len < 0.04) {
+    return null;
+  }
+
+  return Math.max(-1, Math.min(1, vx / len));
+}
+
+export function findLeftHand(hands: Landmark3D[][], pose?: Landmark3D[] | null): Landmark3D[] | null {
+  const validHands = hands.filter(h => h && h.length >= 21);
+  if (validHands.length === 0) return null;
+
+  const hasPoseLeft = Boolean(
+    pose && pose[15] && Number.isFinite(pose[15].x) && Number.isFinite(pose[15].y) && (pose[15].visibility ?? 1) > 0.3
+  );
+  const hasPoseRight = Boolean(
+    pose && pose[16] && Number.isFinite(pose[16].x) && Number.isFinite(pose[16].y) && (pose[16].visibility ?? 1) > 0.3
+  );
+
+  if (hasPoseLeft || hasPoseRight) {
+    const lWrist = hasPoseLeft ? pose![15] : null;
+    const rWrist = hasPoseRight ? pose![16] : null;
+    const distinctWrists = Boolean(
+      lWrist && rWrist && Math.hypot(lWrist.x - rWrist.x, lWrist.y - rWrist.y) >= 0.08
+    );
+
+    let bestHand: Landmark3D[] | null = null;
+    let bestDist = 0.25;
+
+    for (const hand of validHands) {
+      const dL = lWrist ? Math.hypot(hand[0].x - lWrist.x, hand[0].y - lWrist.y) : Infinity;
+      const dR = rWrist ? Math.hypot(hand[0].x - rWrist.x, hand[0].y - rWrist.y) : Infinity;
+
+      if (distinctWrists) {
+        if (dL < bestDist && dL < dR) {
+          bestDist = dL;
+          bestHand = hand;
+        }
+      } else if (lWrist) {
+        if (dL < bestDist) {
+          bestDist = dL;
+          bestHand = hand;
+        }
+      }
+    }
+    if (bestHand) return bestHand;
+    if (distinctWrists) return null;
+  }
+
+  if (validHands.length === 1) {
+    return validHands[0][0].x < 0.50 ? validHands[0] : null;
+  }
+  const sorted = [...validHands].sort((a, b) => a[0].x - b[0].x);
+  return sorted[0][0].x < 0.55 ? sorted[0] : null;
+}
+
+export function findRightHand(hands: Landmark3D[][], pose?: Landmark3D[] | null): Landmark3D[] | null {
+  const validHands = hands.filter(h => h && h.length >= 21);
+  if (validHands.length === 0) return null;
+
+  const hasPoseLeft = Boolean(
+    pose && pose[15] && Number.isFinite(pose[15].x) && Number.isFinite(pose[15].y) && (pose[15].visibility ?? 1) > 0.3
+  );
+  const hasPoseRight = Boolean(
+    pose && pose[16] && Number.isFinite(pose[16].x) && Number.isFinite(pose[16].y) && (pose[16].visibility ?? 1) > 0.3
+  );
+
+  if (hasPoseLeft || hasPoseRight) {
+    const lWrist = hasPoseLeft ? pose![15] : null;
+    const rWrist = hasPoseRight ? pose![16] : null;
+    const distinctWrists = Boolean(
+      lWrist && rWrist && Math.hypot(lWrist.x - rWrist.x, lWrist.y - rWrist.y) >= 0.08
+    );
+
+    let bestHand: Landmark3D[] | null = null;
+    let bestDist = 0.25;
+
+    for (const hand of validHands) {
+      const dL = lWrist ? Math.hypot(hand[0].x - lWrist.x, hand[0].y - lWrist.y) : Infinity;
+      const dR = rWrist ? Math.hypot(hand[0].x - rWrist.x, hand[0].y - rWrist.y) : Infinity;
+
+      if (distinctWrists) {
+        if (dR < bestDist && dR < dL) {
+          bestDist = dR;
+          bestHand = hand;
+        }
+      } else if (rWrist) {
+        if (dR < bestDist) {
+          bestDist = dR;
+          bestHand = hand;
+        }
+      }
+    }
+    if (bestHand) return bestHand;
+    if (distinctWrists) return null;
+  }
+
+  if (validHands.length === 1) {
+    return validHands[0][0].x > 0.50 ? validHands[0] : null;
+  }
+  const sorted = [...validHands].sort((a, b) => b[0].x - a[0].x);
+  return sorted[0][0].x > 0.45 ? sorted[0] : null;
+}
 
 export class CombinedCalibrationCapture {
   private body: NonNullable<ReturnType<typeof bodyMetrics>>[] = [];
   private open: number[] = [];
   private pinched: number[] = [];
+  private leftTilts: number[] = [];
   private lastAt = -Infinity;
 
   update(frame: { pose: Landmark3D[] | null; hands: Landmark3D[][] }, elapsedMs: number, now: number): void {
@@ -84,9 +244,17 @@ export class CombinedCalibrationCapture {
     if (metrics) this.body.push(metrics);
     const ratio = frame.hands.map(computePinchRatio).find(value => Number.isFinite(value) && value > 0.02 && value < 2);
     if (ratio !== undefined) (elapsedMs < 2500 ? this.open : this.pinched).push(ratio);
+
+    const leftHand = findLeftHand(frame.hands, frame.pose);
+    if (leftHand) {
+      const tilt = computeWholeHandTilt(leftHand);
+      if (tilt !== null && Number.isFinite(tilt)) {
+        this.leftTilts.push(tilt);
+      }
+    }
   }
 
-  finish(): { baseline?: CalibrationProfile['bodyBaseline']; center?: CalibrationProfile['neutralTorsoCenter']; pinch?: PinchThresholds; errors: string[] } {
+  finish(): { baseline?: CalibrationProfile['bodyBaseline']; center?: CalibrationProfile['neutralTorsoCenter']; pinch?: PinchThresholds; cameraBaselineTilt?: number; errors: string[] } {
     const errors: string[] = [];
     let baseline: CalibrationProfile['bodyBaseline'];
     let center: CalibrationProfile['neutralTorsoCenter'] | undefined;
@@ -109,7 +277,24 @@ export class CombinedCalibrationCapture {
       if (release - contact < 0.15) errors.push('Open and pinch poses were too similar. Separate your fingers, then pinch firmly.');
       else pinch = { close: Number((contact + (release - contact) * 0.25).toFixed(3)), open: Number((contact + (release - contact) * 0.65).toFixed(3)) };
     }
-    return { baseline, center, pinch, errors };
+
+    let cameraBaselineTilt: number | undefined;
+    if (this.leftTilts.length >= 10) {
+      const mean = this.leftTilts.reduce((sum, v) => sum + v, 0) / this.leftTilts.length;
+      const variance = this.leftTilts.reduce((sum, v) => sum + (v - mean) ** 2, 0) / this.leftTilts.length;
+      const std = Math.sqrt(variance);
+      if (std > 0.20) {
+        errors.push('Left hand moved too much during calibration. Hold all 5 fingers open pointing steady at the camera.');
+      } else {
+        const sorted = [...this.leftTilts].sort((a, b) => a - b);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        cameraBaselineTilt = Math.max(-0.35, Math.min(0.35, Number(med.toFixed(3))));
+      }
+    } else {
+      cameraBaselineTilt = 0;
+    }
+
+    return { baseline, center, pinch, cameraBaselineTilt, errors };
   }
 }
 
@@ -249,21 +434,7 @@ export function computeTorsoMetrics(pose: Landmark3D[] | null): {
   return { center, shoulderWidth: Math.max(0.1, shoulderWidth) };
 }
 
-export function isOpenPalm(hand: Landmark3D[]): boolean {
-  if (!hand || hand.length < 21) return false;
-  const wrist = hand[0];
-  const tips = [hand[4], hand[8], hand[12], hand[16], hand[20]];
-  const mcps = [hand[2], hand[5], hand[9], hand[13], hand[17]];
 
-  for (let i = 0; i < 5; i++) {
-    const tipDist = Math.hypot(tips[i].x - wrist.x, tips[i].y - wrist.y);
-    const mcpDist = Math.hypot(mcps[i].x - wrist.x, mcps[i].y - wrist.y);
-    if (tipDist < mcpDist * 1.1) {
-      return false; // Finger is curled
-    }
-  }
-  return true;
-}
 
 
 export function bodyMetrics(pose: Landmark3D[] | null) {
@@ -293,3 +464,45 @@ export class BodyCalibrationCapture {
     return unstable ? { error: true as const } : { error: false as const, baseline: {version: 1 as const,noseX,shoulderWidth:width}, center };
   }
 }
+
+export class LeftHandCalibrationCapture {
+  public samples: number[] = [];
+  private last = -Infinity;
+  private requiredSamples: number;
+
+  constructor(requiredSamples = 15) {
+    this.requiredSamples = requiredSamples;
+  }
+
+  update(
+    hands: Landmark3D[][],
+    pose: Landmark3D[] | null,
+    now: number
+  ): { error: true } | { error: false; cameraBaselineTilt: number } | null {
+    if (now - this.last > 400) this.samples = [];
+    const leftHand = findLeftHand(hands, pose);
+    if (!leftHand) return null;
+    const tilt = computeWholeHandTilt(leftHand);
+    if (tilt === null || !Number.isFinite(tilt) || now - this.last < 40) return null;
+
+    this.last = now;
+    this.samples.push(tilt);
+    if (this.samples.length < this.requiredSamples) return null;
+
+    const mean = this.samples.reduce((a, b) => a + b, 0) / this.samples.length;
+    const variance = this.samples.reduce((a, b) => a + (b - mean) ** 2, 0) / this.samples.length;
+    const std = Math.sqrt(variance);
+
+    this.samples = [];
+    if (std > 0.15) {
+      return { error: true };
+    }
+    const cameraBaselineTilt = Math.max(-0.35, Math.min(0.35, Number(mean.toFixed(3))));
+    return { error: false, cameraBaselineTilt };
+  }
+
+  get sampleCount(): number {
+    return this.samples.length;
+  }
+}
+

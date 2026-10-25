@@ -6,6 +6,8 @@ import type {
   PlayerColor,
 } from '@let-him-rook/shared';
 import type { VisionFrameData } from '../vision/visionManager.ts';
+import type { CameraTurnIntent } from '../gestures/combatGestures.ts';
+import { buildInviteLink, copyText } from '../networking/invite.ts';
 
 interface MatchHUDProps {
   snapshot: MatchSnapshot | null;
@@ -23,6 +25,7 @@ interface MatchHUDProps {
   onToggleSandbox?: () => void;
   isSandboxOpen?: boolean;
   torsoLean?: { leanX: number; leanZ: number; inDeadzone: boolean } | null;
+  cameraTurn?: CameraTurnIntent | null;
   usingKeyboard?: boolean;
   connected?: boolean;
 }
@@ -30,7 +33,7 @@ interface MatchHUDProps {
 const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; primaryAbility: AbilityType }> = {
   pawn: {
     title: '♙ PAWN',
-    gesture: 'Sweep right wrist to Slash (18 dmg) • Hold left open palm to Parry (100% block)',
+    gesture: 'Stationary open right palm to Parry • Rapid right wrist sweep to Slash (18 dmg)',
     primaryAbility: 'pawn_sweep',
   },
   rook: {
@@ -40,7 +43,7 @@ const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; 
   },
   knight: {
     title: '♘ KNIGHT',
-    gesture: 'Cross forearms at chest then rapidly separate to Teleport + Cleave (24 dmg)',
+    gesture: 'Raise right hand above shoulder and chop down to Cleave (24 dmg)',
     primaryAbility: 'knight_cleave',
   },
   bishop: {
@@ -50,12 +53,12 @@ const CLASS_GESTURE_GUIDE: Record<PieceClass, { title: string; gesture: string; 
   },
   queen: {
     title: '♕ QUEEN',
-    gesture: 'Raise both open palms to shoulder height and push forward for 3-Orb Homing Volley (27 dmg)',
+    gesture: 'Raise right open palm to shoulder height for 3-Orb Homing Volley (27 dmg)',
     primaryAbility: 'queen_volley',
   },
   king: {
     title: '♔ KING',
-    gesture: 'Clasp both hands at chest for 0.4s to Summon a random 1-HP Ally',
+    gesture: 'Hold closed right fist at chest center for 0.4s to Summon a random 1-HP Ally',
     primaryAbility: 'king_summon',
   },
 };
@@ -76,11 +79,14 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   onToggleSandbox,
   isSandboxOpen,
   torsoLean,
+  cameraTurn,
   usingKeyboard,
   connected = true,
 }) => {
   const [showMiniCam, setShowMiniCam] = useState(true);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [copiedInvite, setCopiedInvite] = useState(false);
   const [clockNow, setClockNow] = useState(Date.now());
   useEffect(() => {
     if (!snapshot?.paused) return;
@@ -209,6 +215,15 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
   // Strictly gated dev controls check
   const allowDev = true;
 
+  const handleCopyInvite = async () => {
+    const link = await buildInviteLink(snapshot.roomId);
+    setInviteLink(link);
+    if (await copyText(link)) {
+      setCopiedInvite(true);
+      setTimeout(() => setCopiedInvite(false), 1800);
+    }
+  };
+
   const handleCopyRoom = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(snapshot.roomId).catch(() => {});
@@ -280,6 +295,33 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             ROOM: <span style={{ color: '#60a5fa' }}>{snapshot.roomId}</span>{' '}
             {copiedRoom ? '✅' : '📋'}
           </button>
+
+          {snapshot.mode === 'pvp' && (
+            <button
+              onClick={handleCopyInvite}
+              title={inviteLink ?? 'Copy a link the other player can open to join this room'}
+              style={{
+                backgroundColor: '#1e3a8a',
+                padding: '0.45rem 0.9rem',
+                borderRadius: 8,
+                border: '1px solid #3b5bdb',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                color: '#e0e7ff',
+                cursor: 'pointer',
+              }}
+            >
+              {copiedInvite ? '✅ Link copied' : '🔗 Copy invite link'}
+            </button>
+          )}
+
+          {snapshot.mode === 'pvp' && inviteLink && (
+            <span
+              style={{ fontSize: '0.75rem', color: '#cbd5e1', userSelect: 'all', fontFamily: 'monospace' }}
+            >
+              {inviteLink}
+            </span>
+          )}
 
           <div
             style={{
@@ -619,9 +661,20 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
               <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#93c5fd' }}>
                 {localGuide ? `${localGuide.title}: ${localGuide.gesture}` : ''}
               </span>
-              <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f59e0b', whiteSpace: 'nowrap' }}>
-                ⏳ {Math.ceil(duel.remainingMs / 1000)}s
-              </span>
+              <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: cameraTurn?.turnDir ? '#38bdf8' : cameraTurn?.active ? '#4ade80' : '#94a3b8' }}>
+                  {!cameraTurn || !cameraTurn.active
+                    ? '✋ 5 FINGERS OPEN TO AIM'
+                    : cameraTurn.turnDir === -1
+                    ? '⟲ AIM LEFT'
+                    : cameraTurn.turnDir === 1
+                    ? '⟳ AIM RIGHT'
+                    : '• AIM NEUTRAL'}
+                </span>
+                <span style={{ fontSize: '1.2rem', fontWeight: 900, color: '#f59e0b', whiteSpace: 'nowrap' }}>
+                  ⏳ {Math.ceil(duel.remainingMs / 1000)}s
+                </span>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem' }}>
@@ -810,7 +863,7 @@ export const MatchHUD: React.FC<MatchHUDProps> = ({
             }}
           >
             <span style={{ color: '#f59e0b', fontWeight: 700 }}>
-              [DEV • WASD Move • Space Cast]:
+              [DEV • WASD Move • Q/E Aim • Space Cast]:
             </span>
             <button
               onClick={() => onDevAbility?.(localGuide.primaryAbility)}

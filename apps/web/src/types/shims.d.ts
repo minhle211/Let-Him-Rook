@@ -108,6 +108,7 @@ declare module '@react-three/fiber' {
     children?: any;
     camera?: any;
     shadows?: boolean;
+    dpr?: number | [number, number];
     style?: any;
     gl?: any;
   }
@@ -143,11 +144,18 @@ declare module '@mediapipe/tasks-vision' {
   export class HandLandmarker {
     static createFromOptions(wasm: any, options: any): Promise<HandLandmarker>;
     detectForVideo(video: HTMLVideoElement | ImageBitmap, timestamp: number): HandLandmarkerResult;
+    close(): void;
   }
   export class PoseLandmarker {
     static createFromOptions(wasm: any, options: any): Promise<PoseLandmarker>;
     detectForVideo(video: HTMLVideoElement | ImageBitmap, timestamp: number): PoseLandmarkerResult;
+    close(): void;
   }
+}
+
+declare module '*?url' {
+  const url: string;
+  export default url;
 }
 
 interface ImportMetaEnv {

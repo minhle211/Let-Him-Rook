@@ -103,7 +103,9 @@ export class MatchMachine {
         this.pausedSince = null;
         if (this.duel) {
           this.duel.attacker.vx = this.duel.attacker.vz = 0;
+          this.duel.attacker.turnRate = 0;
           this.duel.defender.vx = this.duel.defender.vz = 0;
+          this.duel.defender.turnRate = 0;
         }
       }
     }
@@ -265,12 +267,13 @@ export class MatchMachine {
     moveX: number,
     moveZ: number,
     actionId: string,
-    now = Date.now()
+    now = Date.now(),
+    turnDir = 0
   ): { accepted: boolean; reason?: string } {
     if (this.phase !== 'active_duel' || !this.duel) {
       return { accepted: false, reason: 'not_active_duel' };
     }
-    applyMovementIntent(this.duel, color, moveX, moveZ, now);
+    applyMovementIntent(this.duel, color, moveX, moveZ, now, turnDir);
     return { accepted: true };
   }
 
