@@ -86,5 +86,6 @@ This is a hackathon prototype. Tracking quality depends on lighting, framing, br
 ## Developers
 
 - **Johnny (Dong Quan) Tran** - [dongquan.tran.johnny@gmail.com](mailto:dongquan.tran.johnny@gmail.com)
+- **Vu Quang Minh Le** - [minh.levuq@gmail.com](mailto:minh.levuq@gmail.com)
 
 <!-- Team members: add your name and preferred contact link above. -->
